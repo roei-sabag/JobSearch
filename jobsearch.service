@@ -1,0 +1,16 @@
+[Unit]
+Description=Autonomous Resume System (jobsearch-pi)
+After=network.target
+
+[Service]
+Type=simple
+User=roeipi
+Group=roeipi
+WorkingDirectory=/home/roeipi/jobsearch-pi
+ExecStart=/home/roeipi/jobsearch-pi/venv/bin/python /home/roeipi/jobsearch-pi/run_app.py
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

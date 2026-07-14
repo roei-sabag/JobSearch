@@ -1,0 +1,185 @@
+{
+  "authentic_traits": [
+    "Motivated",
+    "Detail-oriented",
+    "Analytical",
+    "Proactive",
+    "Diligent",
+    "Collaborative",
+    "Curious",
+    "Persistent",
+    "Methodical",
+    "Self-driven",
+    "Effective Debugging Skills",
+    "Strong Motivation",
+    "Strong Problem Solver",
+    "Performance-Driven Mindset",
+    "Performance-Focused Mindset"
+  ],
+  "authentic_seeking_domains": [
+    "Hardware Verification",
+    "DFT (Design for Test)",
+    "RTL Design",
+    "FPGA Development",
+    "Digital Design",
+    "Communication Systems",
+    "Embedded Systems",
+    "Signal Processing",
+    "Computer Architecture",
+    "communication-related hardware roles",
+    "Firmware",
+    "AI Tooling & Automation",
+    "Micro-architecture",
+    "Hardware Integration",
+    "Chip Design",
+    "Firmware Development",
+    "AI-Assisted Engineering"
+  ],
+  "soft_skill_bank": [
+    {
+      "phrase": "Strong Analytical Thinking",
+      "keywords": [
+        "analytical",
+        "analysis",
+        "logical",
+        "reasoning"
+      ]
+    },
+    {
+      "phrase": "Problem-Solving Mindset",
+      "keywords": [
+        "problem",
+        "solving",
+        "troubleshooting",
+        "debug",
+        "debugging"
+      ]
+    },
+    {
+      "phrase": "Collaborative Team Player",
+      "keywords": [
+        "team",
+        "collaborative",
+        "collaboration",
+        "cross-functional",
+        "interpersonal",
+        "communication"
+      ]
+    },
+    {
+      "phrase": "Detail-Oriented",
+      "keywords": [
+        "detail",
+        "detailed",
+        "precision",
+        "accurate",
+        "thoroughness",
+        "quality"
+      ]
+    },
+    {
+      "phrase": "Meticulous Approach",
+      "keywords": [
+        "meticulous",
+        "careful",
+        "rigorous"
+      ]
+    },
+    {
+      "phrase": "Proactive Self-Starter",
+      "keywords": [
+        "proactive",
+        "initiative",
+        "starter",
+        "ownership",
+        "drive"
+      ]
+    },
+    {
+      "phrase": "Diligent Work Ethic",
+      "keywords": [
+        "diligent",
+        "hardworking",
+        "dedicated",
+        "thorough"
+      ]
+    },
+    {
+      "phrase": "Highly Motivated",
+      "keywords": [
+        "motivated",
+        "passionate",
+        "driven",
+        "enthusiastic",
+        "ambitious"
+      ]
+    },
+    {
+      "phrase": "Curious Mindset",
+      "keywords": [
+        "curious",
+        "exploring",
+        "inquisitive"
+      ]
+    },
+    {
+      "phrase": "Fast Learner",
+      "keywords": [
+        "learn",
+        "learning",
+        "quick",
+        "adaptable",
+        "eager"
+      ]
+    },
+    {
+      "phrase": "Persistent",
+      "keywords": [
+        "persistent",
+        "perseverance",
+        "tenacious"
+      ]
+    },
+    {
+      "phrase": "Resilient",
+      "keywords": [
+        "resilient",
+        "challenging",
+        "adaptable"
+      ]
+    },
+    {
+      "phrase": "Methodical Approach",
+      "keywords": [
+        "methodical",
+        "systematic",
+        "structured",
+        "process"
+      ]
+    },
+    {
+      "phrase": "Well-Organized",
+      "keywords": [
+        "organized",
+        "disciplined",
+        "structured"
+      ]
+    },
+    {
+      "phrase": "Autonomous Worker",
+      "keywords": [
+        "independent",
+        "autonomous",
+        "unsupervised"
+      ]
+    },
+    {
+      "phrase": "Self-Driven",
+      "keywords": [
+        "self-motivated",
+        "self-driven",
+        "ownership"
+      ]
+    }
+  ]
+}

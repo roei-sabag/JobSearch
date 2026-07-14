@@ -1,0 +1,19 @@
+{
+  "_comment": "Ground-truth academic transcript data, extracted precisely (word-position based) from rwservlet.pdf. ONLY courses with a genuine numeric grade in the 80-100 range are included (grades of 'Pass'/'Exempt'/'400'(binary pass code)/'F' are excluded per instruction). 'tags' are used for JD-relevance matching only; they do not add any new factual claims.",
+  "courses": [
+    {"name": "Data Structures", "grade": 82, "tags": ["programming", "software", "data structures", "algorithms", "python", "c", "c++", "coding"]},
+    {"name": "Introduction to Computers", "grade": 85, "tags": ["computer architecture", "digital systems", "hardware", "computer", "cpu", "architecture"]},
+    {"name": "Introduction to Analog Electronic Circuits", "grade": 87, "tags": ["analog", "electronics", "circuits", "hardware", "electrical"]},
+    {"name": "Electronic Circuits Laboratory", "grade": 95, "tags": ["circuits", "electronics", "lab", "hardware", "hands-on", "testing", "debugging"]},
+    {"name": "Introductory Electricity Laboratory", "grade": 81, "tags": ["circuits", "electronics", "lab", "hardware", "hands-on"]},
+    {"name": "Introduction to Linear Systems", "grade": 86, "tags": ["signal processing", "control", "systems", "linear systems", "dsp", "signals"]},
+    {"name": "Introduction to Control", "grade": 85, "tags": ["control theory", "control systems", "feedback", "systems"]},
+    {"name": "Introduction to Stochastic Processes", "grade": 81, "tags": ["signal processing", "probability", "random processes", "communication", "statistics"]},
+    {"name": "Probability Theory for EE", "grade": 96, "tags": ["probability", "signal processing", "communication", "random processes", "statistics"]},
+    {"name": "Introduction to Computational Methods", "grade": 100, "tags": ["numerical methods", "programming", "simulation", "matlab", "computational"]},
+    {"name": "Introduction to Electrical Engineering", "grade": 80, "tags": ["electrical engineering", "general", "fundamentals"]},
+    {"name": "Physics 1A for Students of Electrical Engineering", "grade": 86, "tags": ["physics", "general", "fundamentals"]},
+    {"name": "Physics 2A", "grade": 86, "tags": ["physics", "general", "fundamentals"]},
+    {"name": "You're Disqualifying Me on Account of An Onion?!: Milestones in Israeli Satire", "grade": 86, "tags": []}
+  ]
+}

@@ -1,0 +1,9 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+jobs.db
+output/
+_rendered_cv.html
+_css_history/

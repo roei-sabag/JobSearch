@@ -1,0 +1,4 @@
+Hardware & Verification: SystemVerilog, ModelSim, RTL Design, Testbench Development, Vivado, FPGA Synthesis, Advanced Computer Architecture, Semiconductor Devices, Electrical Circuits, Analog Electronics, Electromagnetic Fields. 
+Programming & Tools: Python, C/C++, Linux, Git. 
+Engineering Fields: Signal Processing, Random Processes, Control Theory, Communication Systems.
+AI & Automation: LLM API Integration (Anthropic Claude), Prompt Engineering, Python Automation with LLMs.

@@ -1,0 +1,33 @@
+{
+  "categories": [
+    {
+      "name": "Hardware & Verification",
+      "skills": [
+        "SystemVerilog",
+        "ModelSim",
+        "RTL Design",
+        "Testbench Development",
+        "Vivado",
+        "FPGA Synthesis",
+        "Advanced Computer Architecture"
+      ]
+    },
+    {
+      "name": "Programming & Tools",
+      "skills": [
+        "Python",
+        "C/C++",
+        "Linux",
+        "Git"
+      ]
+    },
+    {
+      "name": "AI & Automation",
+      "skills": [
+        "LLM API Integration (Anthropic Claude)",
+        "Prompt Engineering",
+        "Python Automation with LLMs"
+      ]
+    }
+  ]
+}

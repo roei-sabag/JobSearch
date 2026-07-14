@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Roei Sabag - CV</title>
+<style>
+{{ inline_css }}
+</style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>Roei Sabag</h1>
+        <div class="contact-line">
+            +972-53-5222-410 | Haifa District, Israel | roei.sabag@outlook.com | <a href="https://www.linkedin.com/in/roei-sabag" class="link">LinkedIn</a>
+        </div>
+        <div class="title-line">{{ title_line }}</div>
+
+    </div>
+
+    <div class="summary">
+        {{ soft_skills_line }}
+        <br>
+        {{ seeking_line }}
+    </div>
+
+
+
+    <hr class="divider">
+
+    <div class="section">
+        <div class="section-title">
+            <span class="section-title-text">Experience</span> <span class="section-title-date">Oct 2024 - present</span>
+        </div>
+        <div class="entry">
+            <div class="entry-title">Private Tutor – Electrical Engineering Core Courses (Ben-Gurion University)</div>
+            <ul class="bullets">
+                <li>Provided individual tutoring in Semiconductor Devices, Electrical Circuits, Analog Electronics, and Electromagnetic Fields.</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="section-title">
+            <span class="section-title-text">Projects</span>
+        </div>
+        <div class="entry">
+            <div class="entry-header">
+                <span class="entry-title">SimpleRisC - CPU RTL Design and Verification (Personal Project)</span> <span class="entry-date">Oct 2025 – Present</span>
+            </div>
+            <ul class="bullets">
+                <li>Designed and verified ALU, Control Unit, Register File, and Memory modules with comprehensive testbenches in ModelSim using SystemVerilog.</li>
+                <li>Performed synthesis and implementation in Vivado.</li>
+                <li>GitHub: github.com/matan-roei-labs</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="section-title">
+            <span class="section-title-text">Education</span> <span class="section-title-date">Oct 2023 - Present</span>
+        </div>
+        <div class="entry">
+            <div class="entry-title">B.Sc. in Electrical &amp; Computer Engineering (Communications &amp; Computer Systems Track)</div>
+            <div class="entry-subtitle">Ben-Gurion University of the Negev | Expected Graduation: 2027</div>
+            {% if relevant_courses %}
+            <div class="entry-subtitle coursework-line">Relevant Coursework: {% for c in relevant_courses %}{{ c.name }} ({{ c.grade }}){% if not loop.last %}, {% endif %}{% endfor %}</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="section-title">
+            <span class="section-title-text">Skills</span>
+        </div>
+        <div class="skills-block">
+            {% for category in tailored_skills %}
+            <div class="skills-category">
+                <span class="cat-label">{{ category.name }}:</span> {{ category.skills | join(", ") }}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="section-title">
+            <span class="section-title-text">Languages</span>
+        </div>
+        <div class="entry">
+            <ul class="bullets">
+                <li>Hebrew: Native</li>
+                <li>English: Professional Proficiency</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="section-title">
+            <span class="section-title-text">Army</span>
+        </div>
+        <div class="entry">
+            <div class="entry-subtitle">IDF Intelligence Corps | Mar 2015 – Apr 2018</div>
+            <ul class="bullets">
+                <li>Clerk and Operations Room roles: managed classified communications and data coordination.</li>
+            </ul>
+        </div>
+    </div>
+
+</body>
+</html>

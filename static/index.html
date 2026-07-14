@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Job Tailoring — One-Click Ingest</title>
+<style>
+  :root {
+    --bg: #0f1220;
+    --panel: #1a1e33;
+    --accent: #5b8cff;
+    --accent-hover: #7aa2ff;
+    --text: #e6e8f0;
+    --muted: #8a8fa8;
+    --ok: #4ade80;
+    --err: #f87171;
+    --warn: #fbbf24;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: linear-gradient(160deg, var(--bg), #171a2c);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: flex;
+    justify-content: center;
+    padding: 40px 16px;
+  }
+  .container {
+    width: 100%;
+    max-width: 720px;
+  }
+  h1 {
+    font-size: 1.5rem;
+    margin-bottom: 4px;
+  }
+  .subtitle {
+    color: var(--muted);
+    margin-bottom: 24px;
+    font-size: 0.95rem;
+  }
+  textarea {
+    width: 100%;
+    min-height: 220px;
+    resize: vertical;
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid #2b3050;
+    border-radius: 10px;
+    padding: 14px;
+    font-size: 0.95rem;
+    line-height: 1.4;
+    outline: none;
+  }
+  textarea:focus {
+    border-color: var(--accent);
+  }
+  textarea::placeholder {
+    color: var(--muted);
+  }
+  button {
+    margin-top: 14px;
+    width: 100%;
+    padding: 14px;
+    font-size: 1rem;
+    font-weight: 600;
+    color: white;
+    background: var(--accent);
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: background 0.15s ease;
+  }
+  button:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+  button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .log {
+    margin-top: 24px;
+    background: var(--panel);
+    border: 1px solid #2b3050;
+    border-radius: 10px;
+    padding: 16px;
+    min-height: 60px;
+    font-size: 0.9rem;
+  }
+  .log-line {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 4px 0;
+    border-bottom: 1px solid #23273f;
+  }
+  .log-line:last-child { border-bottom: none; }
+  .log-line .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--muted);
+  }
+  .log-line.ok .dot { background: var(--ok); }
+  .log-line.err .dot { background: var(--err); }
+  .log-line.warn .dot { background: var(--warn); }
+  a.pdf-link {
+    color: var(--accent);
+    font-weight: 600;
+    text-decoration: none;
+  }
+  a.pdf-link:hover { text-decoration: underline; }
+  .empty-log {
+    color: var(--muted);
+  }
+  .courses-panel {
+    margin-top: 24px;
+    background: var(--panel);
+    border: 1px solid #2b3050;
+    border-radius: 10px;
+    padding: 16px;
+    display: none;
+  }
+  .courses-panel.visible { display: block; }
+  .courses-panel h3 {
+    margin: 0 0 4px 0;
+    font-size: 1.05rem;
+  }
+  .courses-panel .hint {
+    color: var(--muted);
+    font-size: 0.85rem;
+    margin-bottom: 14px;
+  }
+  .course-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid #23273f;
+  }
+  .course-item:last-of-type { border-bottom: none; }
+  .course-item input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--accent);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .course-item label {
+    flex: 1;
+    cursor: pointer;
+    font-size: 0.92rem;
+  }
+  .course-item .grade {
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+  .course-item.suggested label::after {
+    content: " (suggested)";
+    color: var(--ok);
+    font-size: 0.78rem;
+  }
+  .match-badge {
+    color: var(--accent-hover);
+    font-size: 0.78rem;
+    font-weight: 600;
+    margin-left: 6px;
+  }
+  .soft-skills-panel {
+    margin-top: 20px;
+  }
+  .domains-panel {
+    margin-top: 20px;
+  }
+  .role-phrase-input {
+    width: 100%;
+    background: #12152a;
+    color: var(--text);
+    border: 1px solid #2b3050;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 0.92rem;
+    margin-bottom: 10px;
+    outline: none;
+  }
+  .role-phrase-input:focus {
+    border-color: var(--accent);
+  }
+  #finalizeCoursesBtn {
+    margin-top: 16px;
+  }
+  .title-config-panel {
+    margin-top: 20px;
+  }
+  .title-config-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+  .title-config-row label {
+    font-size: 0.92rem;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  select.semesters-select {
+    background: #12152a;
+    color: var(--text);
+    border: 1px solid #2b3050;
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 0.92rem;
+  }
+  .toggle-checkbox {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+  .qualifier-radio-group {
+    display: flex;
+    gap: 16px;
+    margin-top: 4px;
+  }
+  .qualifier-radio-group label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.92rem;
+    cursor: pointer;
+  }
+  .qualifier-radio-group input[type="radio"] {
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+  .skills-panel {
+    margin-top: 20px;
+  }
+  .skills-category-heading {
+    color: var(--accent-hover);
+    font-size: 0.88rem;
+    font-weight: 600;
+    margin: 12px 0 4px 0;
+  }
+</style>
+
+
+</head>
+<body>
+  <div class="container">
+    <h1>🎯 Paste &amp; Tailor</h1>
+    <div class="subtitle">
+      Paste Raw Job Description Here (WhatsApp, LinkedIn, etc.) — no formatting needed.
+    </div>
+
+    <textarea id="rawText" placeholder="Paste the raw job posting text here..."></textarea>
+    <button id="submitBtn">Submit &amp; Generate Tailored CV</button>
+
+    <div class="log" id="log">
+      <div class="empty-log">Status log will appear here once you submit a job.</div>
+    </div>
+
+    <div class="courses-panel" id="coursesPanel">
+      <h3>📚 Relevant Coursework</h3>
+      <div class="hint">
+        The algorithm pre-selected the courses it thinks are most relevant (marked "suggested"),
+        but you know your own coursework best — check/uncheck any course below, then click
+        "Confirm Coursework &amp; Send CV" to regenerate the PDF with your final picks.
+        <strong>The tailored CV email is only sent after you click this button</strong> — nothing
+        is emailed automatically before you've had a chance to review your coursework selection.
+      </div>
+      <div id="courseList"></div>
+
+      <div class="title-config-panel">
+        <h3>🎓 Header Title Line</h3>
+        <div class="hint">
+          Choose how many semesters remain until graduation and whether the word
+          "Student" appears in the header's title line.
+        </div>
+        <div class="title-config-row">
+          <label for="semestersSelect">Semesters remaining:
+            <select id="semestersSelect" class="semesters-select">
+              <option value="0">0</option>
+              <option value="1">1</option>
+              <option value="2" selected>2</option>
+              <option value="3">3</option>
+            </select>
+          </label>
+          <label for="includeStudentCheckbox">
+            <input type="checkbox" id="includeStudentCheckbox" class="toggle-checkbox" checked />
+            Include "Student" in title line
+          </label>
+        </div>
+      </div>
+
+      <div class="soft-skills-panel">
+
+        <h3>🧠 Relevant Soft Skills</h3>
+        <div class="hint">
+          Pick which soft-skill / character-trait phrases should appear in the CV header's
+          soft skills line. The algorithm's suggestions are pre-checked.
+        </div>
+        <div id="softSkillList"></div>
+      </div>
+
+      <div class="domains-panel">
+        <h3>🎯 Target Role &amp; Domains</h3>
+        <div class="hint">
+          Edit the target role phrase (used in "Seeking a {role} Student position...") and
+          pick which domains should appear in the "...with strong interest in ..." clause.
+          The algorithm's suggestions are pre-filled/pre-checked.
+        </div>
+        <input type="text" id="rolePhraseInput" class="role-phrase-input" placeholder="e.g. Chip Design &amp; Verification" />
+        <div class="qualifier-radio-group">
+          <label><input type="radio" name="roleQualifier" value="Student" checked /> Student</label>
+          <label><input type="radio" name="roleQualifier" value="Junior" /> Junior</label>
+        </div>
+        <div id="domainList"></div>
+      </div>
+
+      <div class="skills-panel">
+        <h3>🛠️ Skills</h3>
+        <div class="hint">
+          Pick which skills from your own skill pool should appear in the CV's Skills section.
+          The previously-tailored selection is pre-checked.
+        </div>
+        <div id="skillList"></div>
+      </div>
+
+      <button id="finalizeCoursesBtn">Confirm Selections &amp; Send CV</button>
+
+
+
+    </div>
+  </div>
+
+
+
+<script>
+const submitBtn = document.getElementById('submitBtn');
+const rawTextEl = document.getElementById('rawText');
+const logEl = document.getElementById('log');
+const coursesPanel = document.getElementById('coursesPanel');
+const courseListEl = document.getElementById('courseList');
+const softSkillListEl = document.getElementById('softSkillList');
+const domainListEl = document.getElementById('domainList');
+const rolePhraseInputEl = document.getElementById('rolePhraseInput');
+const skillListEl = document.getElementById('skillList');
+const semestersSelectEl = document.getElementById('semestersSelect');
+const includeStudentCheckboxEl = document.getElementById('includeStudentCheckbox');
+const finalizeCoursesBtn = document.getElementById('finalizeCoursesBtn');
+
+
+
+
+let currentJobId = null;
+
+
+function clearLog() {
+  logEl.innerHTML = '';
+}
+
+function logLine(text, kind) {
+  if (logEl.querySelector('.empty-log')) clearLog();
+  const div = document.createElement('div');
+  div.className = 'log-line ' + (kind || '');
+  const dot = document.createElement('span');
+  dot.className = 'dot';
+  const span = document.createElement('span');
+  span.innerHTML = text;
+  div.appendChild(dot);
+  div.appendChild(span);
+  logEl.appendChild(div);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+async function pollJobStatus(jobId, attempt) {
+  attempt = attempt || 0;
+  if (attempt > 60) {
+    logLine('Timed out waiting for tailoring to finish. Check server logs.', 'err');
+    submitBtn.disabled = false;
+    return;
+  }
+  try {
+    const res = await fetch(`/api/jobs/${jobId}`);
+    if (!res.ok) throw new Error('Failed to fetch job status');
+    const job = await res.json();
+
+    if (job.status === 'tailored' && job.tailored_versions && job.tailored_versions.length > 0) {
+      const latest = job.tailored_versions[0];
+      const filename = latest.pdf_path.split(/[\\/]/).pop();
+      logLine(`Draft ready: <a class="pdf-link" href="/files/cvs/${filename}" target="_blank">View Draft PDF</a> — review the coursework below before the email is sent.`, 'ok');
+      submitBtn.disabled = false;
+      currentJobId = jobId;
+      loadCourseOptions(jobId);
+      return;
+    }
+
+
+    if (job.status === 'tailor_failed') {
+      logLine('Tailoring failed on the server. Check server logs for details.', 'err');
+      submitBtn.disabled = false;
+      return;
+    }
+
+    logLine(`Tailoring CV in background... (status: ${job.status})`);
+    setTimeout(() => pollJobStatus(jobId, attempt + 1), 2000);
+  } catch (err) {
+    logLine('Error while polling job status: ' + err.message, 'err');
+    submitBtn.disabled = false;
+  }
+}
+
+async function loadCourseOptions(jobId) {
+  try {
+    const [coursesRes, softSkillsRes, domainsRes, skillsRes] = await Promise.all([
+      fetch(`/api/jobs/${jobId}/course-options`),
+      fetch(`/api/jobs/${jobId}/soft-skill-options`),
+      fetch(`/api/jobs/${jobId}/domain-options`),
+      fetch(`/api/jobs/${jobId}/skill-options`),
+    ]);
+    if (!coursesRes.ok) throw new Error('Failed to fetch course options');
+    if (!softSkillsRes.ok) throw new Error('Failed to fetch soft skill options');
+    if (!domainsRes.ok) throw new Error('Failed to fetch domain options');
+    if (!skillsRes.ok) throw new Error('Failed to fetch skill options');
+
+    const coursesData = await coursesRes.json();
+    const softSkillsData = await softSkillsRes.json();
+    const domainsData = await domainsRes.json();
+    const skillsData = await skillsRes.json();
+
+    renderCourseList(coursesData.options);
+    renderSoftSkillList(softSkillsData.options);
+    renderDomainList(domainsData.options);
+    renderSkillList(skillsData.options);
+    rolePhraseInputEl.value = domainsData.suggested_role || '';
+    coursesPanel.classList.add('visible');
+  } catch (err) {
+    logLine('Could not load course/soft-skill/domain/skill options: ' + err.message, 'err');
+  }
+}
+
+
+
+function renderCourseList(options) {
+  courseListEl.innerHTML = '';
+  options.forEach((course, idx) => {
+    const item = document.createElement('div');
+    item.className = 'course-item' + (course.suggested ? ' suggested' : '');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.id = `course-${idx}`;
+    checkbox.value = course.name;
+    checkbox.checked = course.suggested;
+    const label = document.createElement('label');
+    label.setAttribute('for', checkbox.id);
+    label.innerHTML = `${course.name} <span class="grade">(Grade: ${course.grade})</span>` +
+      `<span class="match-badge">${course.match_percentage}% match</span>`;
+    item.appendChild(checkbox);
+    item.appendChild(label);
+    courseListEl.appendChild(item);
+  });
+}
+
+function renderSoftSkillList(options) {
+  softSkillListEl.innerHTML = '';
+  options.forEach((skill, idx) => {
+    const item = document.createElement('div');
+    item.className = 'course-item' + (skill.suggested ? ' suggested' : '');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.id = `soft-skill-${idx}`;
+    checkbox.value = skill.phrase;
+    checkbox.checked = skill.suggested;
+    const label = document.createElement('label');
+    label.setAttribute('for', checkbox.id);
+    label.innerHTML = `${skill.phrase}` +
+      `<span class="match-badge">${skill.match_percentage}% match</span>`;
+    item.appendChild(checkbox);
+    item.appendChild(label);
+    softSkillListEl.appendChild(item);
+  });
+}
+
+function renderDomainList(options) {
+  domainListEl.innerHTML = '';
+  options.forEach((domain, idx) => {
+    const item = document.createElement('div');
+    item.className = 'course-item' + (domain.suggested ? ' suggested' : '');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.id = `domain-${idx}`;
+    checkbox.value = domain.domain;
+    checkbox.checked = domain.suggested;
+    const label = document.createElement('label');
+    label.setAttribute('for', checkbox.id);
+    label.innerHTML = `${domain.domain}` +
+      `<span class="match-badge">${domain.match_percentage}% match</span>`;
+    item.appendChild(checkbox);
+    item.appendChild(label);
+    domainListEl.appendChild(item);
+  });
+}
+
+function renderSkillList(options) {
+  skillListEl.innerHTML = '';
+  let lastCategory = null;
+  options.forEach((skill, idx) => {
+    if (skill.category !== lastCategory) {
+      const heading = document.createElement('div');
+      heading.className = 'skills-category-heading';
+      heading.textContent = skill.category;
+      skillListEl.appendChild(heading);
+      lastCategory = skill.category;
+    }
+    const item = document.createElement('div');
+    item.className = 'course-item' + (skill.suggested ? ' suggested' : '');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.id = `skill-${idx}`;
+    checkbox.value = skill.skill;
+    checkbox.checked = skill.suggested;
+    const label = document.createElement('label');
+    label.setAttribute('for', checkbox.id);
+    label.innerHTML = `${skill.skill}` +
+      `<span class="match-badge">${skill.match_percentage}% match</span>`;
+    item.appendChild(checkbox);
+    item.appendChild(label);
+    skillListEl.appendChild(item);
+  });
+}
+
+finalizeCoursesBtn.addEventListener('click', async () => {
+  if (!currentJobId) return;
+
+  const checkedCourses = Array.from(courseListEl.querySelectorAll('input[type="checkbox"]:checked'))
+    .map(cb => cb.value);
+  const checkedSoftSkills = Array.from(softSkillListEl.querySelectorAll('input[type="checkbox"]:checked'))
+    .map(cb => cb.value);
+  const checkedDomains = Array.from(domainListEl.querySelectorAll('input[type="checkbox"]:checked'))
+    .map(cb => cb.value);
+  const checkedSkills = Array.from(skillListEl.querySelectorAll('input[type="checkbox"]:checked'))
+    .map(cb => cb.value);
+  const rolePhrase = rolePhraseInputEl.value.trim();
+  const roleQualifier = document.querySelector('input[name="roleQualifier"]:checked').value;
+  const semestersRemaining = parseInt(semestersSelectEl.value, 10);
+  const includeStudentInTitle = includeStudentCheckboxEl.checked;
+
+  finalizeCoursesBtn.disabled = true;
+  logLine('Re-rendering CV with your selected coursework, soft skills, target role/domains, title line, and skills...');
+
+  try {
+    const res = await fetch(`/api/jobs/${currentJobId}/finalize-courses`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        course_names: checkedCourses,
+        soft_skill_phrases: checkedSoftSkills,
+        role_phrase: rolePhrase,
+        selected_domains: checkedDomains,
+        role_qualifier: roleQualifier,
+        semesters_remaining: semestersRemaining,
+        include_student_in_title: includeStudentInTitle,
+        selected_skills: checkedSkills,
+      }),
+    });
+
+
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      throw new Error(errBody.detail || `HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+    const filename = data.pdf_path.split(/[\\/]/).pop();
+    logLine(`CV updated: <a class="pdf-link" href="/files/cvs/${filename}?t=${Date.now()}" target="_blank">View Final PDF</a>`, 'ok');
+    if (data.email_sent) {
+      logLine('Email sent successfully with your final tailored CV attached.', 'ok');
+    } else {
+      logLine('CV finalized, but the notification email failed to send. Check server logs / SMTP config.', 'warn');
+    }
+  } catch (err) {
+    logLine('Error updating coursework/soft skills/domains: ' + err.message, 'err');
+  } finally {
+    finalizeCoursesBtn.disabled = false;
+  }
+});
+
+
+
+
+submitBtn.addEventListener('click', async () => {
+
+  const rawText = rawTextEl.value.trim();
+  if (!rawText) {
+    alert('Please paste a job description first.');
+    return;
+  }
+
+  submitBtn.disabled = true;
+  clearLog();
+  logLine('Submitting raw text for extraction...');
+
+  try {
+    const res = await fetch('/api/jobs/ingest-raw', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ raw_text: rawText }),
+    });
+
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      throw new Error(errBody.detail || `HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+
+    if (data.is_duplicate) {
+      logLine(`Duplicate detected — this job already exists (ID: ${data.job_id}, status: ${data.status}).`, 'warn');
+    } else {
+      logLine(`Job Ingested (ID: ${data.job_id}) — extraction mode: ${data.extraction_mode}`, 'ok');
+    }
+    logLine(`Extracted Intel — Title: "${data.title}" @ ${data.company_name || 'Unknown/Inferred'}`);
+
+    pollJobStatus(data.job_id);
+  } catch (err) {
+    logLine('Error: ' + err.message, 'err');
+    submitBtn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

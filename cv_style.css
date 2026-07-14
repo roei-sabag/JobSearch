@@ -1,0 +1,163 @@
+@page {
+    size: A4;
+    margin: 1.6cm 1.4cm;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    font-family: "Calibri", "Segoe UI", Arial, sans-serif;
+    color: #1a1a1a;
+    font-size: 11pt;
+    line-height: 1.35;
+    margin: 0;
+    padding: 0;
+}
+
+.header {
+    text-align: center;
+    margin-bottom: 10px;
+}
+
+.header h1 {
+    font-size: 20pt;
+    font-weight: 700;
+    margin: 0 0 4px 0;
+    letter-spacing: 0.5px;
+    color: #1a4fa0;
+    text-align: left;
+}
+
+.contact-line {
+    font-size: 11pt;
+    color: #333;
+    margin: 0 0 4px 0;
+    text-align: left;
+}
+
+.contact-line a, .contact-line span.link {
+    color: #1a4fa0;
+    text-decoration: none;
+}
+
+.title-line {
+    font-size: 11pt;
+    font-weight: 600;
+    color: #222;
+    margin: 2px 0 8px 0;
+    text-align: left;
+}
+
+.summary {
+    font-size: 11pt;
+    color: #222;
+    margin-bottom: 12px;
+    text-align: left;
+    line-height: 1.6;
+}
+
+hr.divider {
+    border: none;
+    border-top: 1px solid #bbb;
+    margin: 8px 0 8px 0;
+    margin-bottom: 8px;
+}
+
+.section {
+    margin-bottom: 12px;
+}
+
+.section-title {
+    font-size: 12pt;
+    color: #111;
+    text-transform: none;
+    padding-bottom: 2px;
+    margin-bottom: 6px;
+}
+
+.section-title-text {
+    font-weight: 600;
+    border-bottom: 1.5px solid #333;
+    padding-bottom: 1px;
+}
+
+.section-title-date {
+    font-weight: 400;
+    font-size: 11pt;
+    color: #333;
+}
+
+.entry {
+    margin-bottom: 8px;
+}
+
+.entry-header {
+    display: block;
+}
+
+.entry-title {
+    font-weight: 700;
+    font-size: 11pt;
+    color: #111;
+}
+
+.entry-date {
+    font-weight: 400;
+    font-size: 11pt;
+    color: #444;
+    font-style: normal;
+    white-space: nowrap;
+}
+
+.entry-subtitle {
+    font-size: 11pt;
+    font-weight: 400;
+    color: #333;
+    margin-bottom: 2px;
+}
+
+.coursework-line {
+    font-size: 10.5pt;
+    color: #444;
+    font-style: italic;
+    margin-top: 2px;
+}
+
+ul.bullets {
+    margin: 4px 0 0 0;
+    padding-left: 18px;
+}
+
+ul.bullets li {
+    margin-bottom: 6px;
+    font-size: 11pt;
+    font-weight: 400;
+}
+
+.skills-block {
+    margin: 0;
+    padding: 0;
+}
+
+.skills-category {
+    margin-bottom: 4px;
+    font-size: 11pt;
+    padding-left: 14px;
+    text-indent: -14px;
+}
+
+.skills-category::before {
+    content: "•  ";
+}
+
+.skills-category .cat-label {
+    font-weight: 700;
+    color: #111;
+}
+
+.two-col-section {
+    display: flex;
+    justify-content: space-between;
+}

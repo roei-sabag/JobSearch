@@ -1,0 +1,9 @@
+INFO:     Started server process [28044]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:59508 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59509 - "POST /api/jobs/2/tailor HTTP/1.1" 202 Accepted
+[tailor_service] LLM path failed (Error code: 404 - {'type': 'error', 'error': {'type': 'not_found_error', 'message': 'model: claude-3-5-sonnet-20241022'}, 'request_id': 'req_011Ccu6vdVgVygQpD1ddNucr'}); falling back to local ranker.
+INFO:     127.0.0.1:54112 - "GET /api/jobs/2 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54146 - "POST /api/jobs/ingest HTTP/1.1" 201 Created
