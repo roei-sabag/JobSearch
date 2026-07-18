@@ -7,11 +7,30 @@ Run locally with:
     uvicorn api.main:app --reload
 """
 
+import sys
+import asyncio
+
+# --- Windows-specific asyncio event loop policy fix ---
+# By default, recent Python/uvicorn setups on Windows may end up using the
+# SelectorEventLoop, which does NOT support asyncio subprocess creation
+# (asyncio.create_subprocess_exec / loop.subprocess_exec raise
+# NotImplementedError). Playwright's sync API (used by tailor_skills.py's
+# render_pdf(), invoked via asyncio.to_thread() from async FastAPI code)
+# needs to launch a Chromium subprocess from within its own internal event
+# loop, which fails under SelectorEventLoop. The ProactorEventLoop (Windows'
+# IOCP-based loop) DOES support subprocesses, so we force it explicitly here,
+# before any other module creates/starts an event loop. This has no effect
+# on Linux/macOS (e.g. the Raspberry Pi deployment), where this branch is
+# simply skipped and the default loop policy is used as-is.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+
 
 from api.routers import jobs as jobs_router
 from db.init_db import init_models

@@ -12,11 +12,23 @@ Usage:
     python run_app.py
 """
 
+import sys
+import asyncio
+
+# --- Windows-specific asyncio event loop policy fix ---
+# See api/main.py for the full explanation: on Windows, the default
+# SelectorEventLoop does not support asyncio subprocess creation, which
+# breaks Playwright's Chromium launch during PDF rendering. Force the
+# ProactorEventLoop here too, before uvicorn/anything else starts a loop.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
 import threading
 import time
 import webbrowser
 
 import uvicorn
+
 
 # NOTE (Tailscale remote-access support): changed from "127.0.0.1" to
 # "0.0.0.0" so uvicorn listens on ALL of the machine's network interfaces
