@@ -244,7 +244,136 @@
     font-weight: 600;
     margin: 12px 0 4px 0;
   }
+  /* NOTE (bug fix, "UI Model Badge is Missing/Incorrect"): the badge
+     container previously rendered as a barely-distinguishable plain
+     log-line (thin border, same background as the surrounding panel),
+     easy to miss entirely at a glance. Made visually prominent per
+     instruction: bolder border/background, larger text, and a colored
+     left accent bar driven by the same ok/warn/err class the JS already
+     applies, so the model-analysis result is unmistakable at the top of
+     the panel. */
+  .mode-badge-container {
+    margin-top: 18px;
+  }
+  .mode-badge-container:empty {
+    display: none;
+  }
+  .mode-badge-container .log-line.mode-badge {
+    background: #12152a;
+    border: 2px solid var(--accent);
+    border-left: 6px solid var(--accent);
+    border-radius: 10px;
+    padding: 12px 16px;
+    font-size: 1rem;
+    font-weight: 600;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  }
+  .mode-badge-container .log-line.mode-badge.ok {
+    border-color: var(--ok);
+    border-left-color: var(--ok);
+  }
+  .mode-badge-container .log-line.mode-badge.warn {
+    border-color: var(--warn);
+    border-left-color: var(--warn);
+  }
+  .mode-badge-container .log-line.mode-badge.err {
+    border-color: var(--err);
+    border-left-color: var(--err);
+  }
+  .mode-badge-container .log-line.mode-badge .dot {
+    width: 10px;
+    height: 10px;
+  }
+
+
+  /* --- Rationale tooltip (task 2): clean, professional hover tooltip that
+     explains WHY a given checklist item was selected, sourced from the
+     backend's "rationale" bullet-point list. Supports RTL reading since the
+     underlying rationale bullets may contain right-to-left text. --- */
+  .rationale-tooltip {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: help;
+    margin-left: 6px;
+    font-size: 0.85rem;
+    line-height: 1;
+  }
+  .rationale-tooltip .rationale-tooltip-text {
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
+    position: absolute;
+    z-index: 20;
+    bottom: 130%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #12152a;
+    color: var(--text);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 0.82rem;
+    line-height: 1.45;
+    width: max-content;
+    max-width: 280px;
+    white-space: normal;
+    direction: rtl;
+    text-align: right;
+    unicode-bidi: plaintext;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+    transition: opacity 0.15s ease, visibility 0.15s ease;
+  }
+  .rationale-tooltip:hover .rationale-tooltip-text,
+  .rationale-tooltip:focus .rationale-tooltip-text {
+    visibility: visible;
+    opacity: 1;
+  }
+
+  /* --- Job Description display panel (shows job.raw_description with the
+     JD phrases that actually drove the AI's rationale bolded), so the user
+     can see at a glance WHICH parts of the pasted posting were picked up
+     by the tailoring pipeline. --- */
+  .jd-panel {
+    margin-top: 24px;
+    background: var(--panel);
+    border: 1px solid #2b3050;
+    border-radius: 10px;
+    padding: 16px;
+    display: none;
+  }
+  .jd-panel.visible { display: block; }
+  .jd-panel h3 {
+    margin: 0 0 4px 0;
+    font-size: 1.05rem;
+  }
+  .jd-panel .hint {
+    color: var(--muted);
+    font-size: 0.85rem;
+    margin-bottom: 12px;
+  }
+  .jd-text-box {
+    max-height: 340px;
+    overflow-y: auto;
+    background: #12152a;
+    border: 1px solid #2b3050;
+    border-radius: 8px;
+    padding: 14px 16px;
+    font-size: 0.9rem;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+  .jd-text-box b {
+    color: var(--ok);
+    background: rgba(74, 222, 128, 0.12);
+    border-radius: 3px;
+    padding: 0 2px;
+  }
 </style>
+
+
 
 
 </head>
@@ -257,6 +386,8 @@
 
     <textarea id="rawText" placeholder="Paste the raw job posting text here..."></textarea>
     <button id="submitBtn">Submit &amp; Generate Tailored CV</button>
+
+    <div class="mode-badge-container" id="modeBadgeContainer"></div>
 
     <div class="log" id="log">
       <div class="empty-log">Status log will appear here once you submit a job.</div>
@@ -334,7 +465,18 @@
 
 
     </div>
+
+    <div class="jd-panel" id="jdPanel">
+      <h3>📄 Job Description</h3>
+      <div class="hint">
+        The original posting you pasted in. Highlighted phrases are the ones the AI actually
+        picked up on — either quoted directly in its rationale, or matching a course/skill/domain/
+        soft-skill it flagged as relevant.
+      </div>
+      <div class="jd-text-box" id="jdTextBox"></div>
+    </div>
   </div>
+
 
 
 
@@ -342,6 +484,7 @@
 const submitBtn = document.getElementById('submitBtn');
 const rawTextEl = document.getElementById('rawText');
 const logEl = document.getElementById('log');
+const modeBadgeContainerEl = document.getElementById('modeBadgeContainer');
 const coursesPanel = document.getElementById('coursesPanel');
 const courseListEl = document.getElementById('courseList');
 const softSkillListEl = document.getElementById('softSkillList');
@@ -356,6 +499,21 @@ const finalizeCoursesBtn = document.getElementById('finalizeCoursesBtn');
 
 
 let currentJobId = null;
+// Rationale bullets ("why was this item selected") from the most recent
+// tailoring run, as returned by GET /api/jobs/{id}. Populated in
+// pollJobStatus() and used by buildRationaleTooltip() below to attach an
+// info-icon tooltip to any checklist item whose name/keyword is referenced
+// in one of these bullets.
+let currentRationale = [];
+// The original pasted job-description text (job.raw_description from
+// GET /api/jobs/{id}), used to populate the "Job Description" display
+// panel with bolded highlights of the phrases that actually drove the
+// AI's rationale/selections.
+let currentJdText = '';
+const jdPanelEl = document.getElementById('jdPanel');
+const jdTextBoxEl = document.getElementById('jdTextBox');
+
+
 
 
 function clearLog() {
@@ -376,7 +534,248 @@ function logLine(text, kind) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
+/**
+ * Maps the raw `mode` string stored per tailoring run (e.g.
+ * "multi-agent-consensus(anthropic+openai+gemini-arbiter)" or
+ * "dual-agent(anthropic+openai, arbiter-failed: ...)") into a short,
+ * human-friendly badge showing exactly which AI agents actually
+ * contributed to this specific result. Returns an HTML snippet (safe,
+ * no user-controlled content is interpolated) or '' if mode is missing.
+ */
+function renderModeBadge(mode) {
+  if (!mode) return '';
+  let label, colorClass;
+  // NOTE (bug fix, root cause of "badge missing/incorrect"): the backend's
+  // actual mode-string vocabulary (tailor_with_multi_agent_consensus() /
+  // tailor_service.py) includes strings this function previously never
+  // recognized, e.g. "single-agent(anthropic-only, ...)" and
+  // "single-agent(openai-only, ...)" (which start with "single-agent(", NOT
+  // "anthropic-claude" or "openai" as this code previously assumed), plus
+  // the standalone-script mode "anthropic-claude-sonnet-4-5". Any mode
+  // string that didn't match one of the old prefixes silently fell through
+  // to the unstyled/near-invisible generic `else` branch (empty
+  // colorClass), which is exactly why the badge appeared "missing" for the
+  // most common real-world case (a single-agent fallback). Matching is now
+  // done against every real prefix the backend can actually produce.
+  if (mode.startsWith('multi-agent-consensus')) {
+    label = '🟢 Analyzed by 3 models (Claude + GPT-4o + Gemini arbiter)';
+    colorClass = 'ok';
+  } else if (mode.startsWith('dual-agent')) {
+    label = '🟡 Analyzed by 2 models (Claude + GPT-4o) — arbiter unavailable';
+    colorClass = 'warn';
+  } else if (mode.startsWith('single-agent(anthropic-only')) {
+    label = '🔵 Analyzed by Claude only — GPT-4o agent failed (see server logs)';
+    colorClass = 'warn';
+  } else if (mode.startsWith('single-agent(openai-only')) {
+    label = '🔵 Analyzed by GPT-4o only — Claude agent failed (see server logs)';
+    colorClass = 'warn';
+  } else if (mode.startsWith('single-agent') || mode.startsWith('anthropic-claude') || mode.startsWith('openai')) {
+    label = '🔵 Analyzed by a single model';
+    colorClass = 'warn';
+  } else if (mode.startsWith('local-fallback')) {
+    label = '⚪ Local keyword algorithm (no LLM available)';
+    colorClass = 'err';
+  } else {
+    label = `ℹ️ Mode: ${mode}`;
+    colorClass = 'warn';
+  }
+  return `<div class="log-line mode-badge ${colorClass}"><span class="dot"></span><span>${label}</span></div>`;
+}
+
+
+/**
+ * Escapes a string for safe interpolation into innerHTML (used for
+ * rationale bullet text, which may come from LLM output and must never be
+ * treated as raw HTML).
+ */
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str == null ? '' : String(str);
+  return div.innerHTML;
+}
+
+// A small set of generic/stopword-like tokens that should never, on their
+// own, count as a "significant" match token when fuzzy-matching a
+// checklist item's name against rationale bullets (e.g. "and", "for",
+// "with" appearing in both a course name and a bullet is meaningless noise,
+// not evidence the bullet is actually ABOUT that item).
+const RATIONALE_STOPWORDS = new Set([
+  'and', 'or', 'the', 'a', 'an', 'of', 'for', 'with', 'to', 'in', 'on',
+  'is', 'are', 'this', 'that', 'from', 'as', 'by', 'was', 'were',
+]);
+
+/**
+ * Splits a checklist item's name/phrase into an array of lowercase,
+ * "significant" word tokens for fuzzy matching against rationale bullets:
+ * strips punctuation, drops short (<3 char) tokens and common stopwords.
+ * E.g. "Digital Systems I" -> ["digital", "systems"]; "C/C++" -> ["c"].
+ */
+function tokenizeForRationaleMatch(text) {
+  return (text || '')
+    .toLowerCase()
+    .split(/[^a-z0-9+#]+/i)
+    .map(t => t.trim())
+    .filter(t => t.length >= 3 && !RATIONALE_STOPWORDS.has(t));
+}
+
+/**
+ * Builds an "ℹ️" info-icon tooltip element (HTML string) for a checklist
+ * item, IF any bullet in the current rationale list appears to reference
+ * the given name/keyword.
+ *
+ * NOTE (bug fix, root cause of "tooltips never appear"): the previous
+ * implementation only did a whole-string substring check
+ * (bulletLower.includes(nameLower) || nameLower.includes(bulletLower)).
+ * Rationale bullets are full LLM-generated sentences (e.g. "Prioritized
+ * SystemVerilog and VHDL due to the 'Hardware Description Languages'
+ * requirement"), while checklist item names are often short/differently
+ * worded ground-truth strings (e.g. a course named "Digital Systems I" vs.
+ * a bullet that just says "Digital Systems", or a domain "Firmware
+ * Development" vs. a bullet that only says "Firmware"). Any minor
+ * wording/punctuation difference caused the whole-string check to fail in
+ * BOTH directions, so no tooltip icon was ever attached in practice.
+ *
+ * Fixed with real fuzzy/partial, case-insensitive matching: the item's name
+ * is tokenized into its significant words (see tokenizeForRationaleMatch
+ * above), and a bullet is considered a match if it contains ANY of those
+ * tokens as a substring (catches inflections like "verify"/"verification"
+ * too) OR the original whole-string substring check still passes (kept as
+ * a fallback for short/exact-match cases). Hovering the icon reveals the
+ * matching rationale bullet(s). Returns '' if no matching rationale bullet
+ * is found (no icon rendered).
+ */
+function buildRationaleTooltip(name) {
+  if (!name || !currentRationale || currentRationale.length === 0) return '';
+  const nameLower = name.toLowerCase();
+  const nameTokens = tokenizeForRationaleMatch(name);
+
+  const matches = currentRationale.filter(bullet => {
+    if (!bullet) return false;
+    const bulletLower = bullet.toLowerCase();
+
+    // Fallback: original whole-string substring check (still useful for
+    // short exact phrases like a soft-skill bank phrase quoted verbatim).
+    if (bulletLower.includes(nameLower) || nameLower.includes(bulletLower)) {
+      return true;
+    }
+
+    // Primary fuzzy/partial match: any significant word-token from the
+    // item's name appears anywhere in the bullet text (case-insensitive).
+    return nameTokens.some(token => bulletLower.includes(token));
+  });
+
+  if (matches.length === 0) return '';
+  const tooltipText = matches.map(escapeHtml).join('<br>• ');
+  return `<span class="rationale-tooltip" tabindex="0">ℹ️<span class="rationale-tooltip-text">• ${tooltipText}</span></span>`;
+}
+
+/**
+ * Builds an "ℹ️" info-icon tooltip specifically for a course checklist item.
+ *
+ * NOTE (bug fix, "I don't see the rationale next to the relevant courses"):
+ * course selection (select_relevant_courses() in tailor_skills.py) is a
+ * fully DETERMINISTIC, non-LLM algorithm (grade + tag-overlap scoring) - the
+ * LLM's "rationale" bullet list is only ever asked to explain
+ * skills/soft-skills/domains, NEVER courses. So buildRationaleTooltip(name)
+ * (which only searches currentRationale) could never find a matching bullet
+ * for a course no matter how good the fuzzy matching is - there was simply
+ * no rationale text about courses to match against.
+ *
+ * Fixed by building a course-specific rationale directly from data already
+ * available on each CourseOption: its own curated `tags` (the real JD
+ * keywords that make it relevant) and `match_percentage`, so every course
+ * gets an accurate, always-present explanation of why it was suggested.
+ */
+function buildCourseRationaleTooltip(course) {
+  const tags = Array.isArray(course.tags) ? course.tags.filter(Boolean) : [];
+  const pct = course.match_percentage;
+  let text;
+  if (tags.length > 0) {
+    text = `Matches JD-relevant keywords: ${tags.join(', ')} (${pct}% relevance)`;
+  } else {
+    text = `${pct}% relevance to this job description (based on course subject matter).`;
+  }
+  const escaped = escapeHtml(text);
+  return `<span class="rationale-tooltip" tabindex="0">ℹ️<span class="rationale-tooltip-text">• ${escaped}</span></span>`;
+}
+
+/**
+ * Extracts the set of "significant" phrases that should be bolded inside
+ * the displayed Job Description text: primarily any quoted phrase inside a
+ * rationale bullet (the LLM's own system prompt instructs it to quote/
+ * reference the specific JD phrase that justified each choice, e.g.
+ * `Prioritized SystemVerilog due to the 'Hardware Description Languages'
+ * requirement`), plus every "suggested" item's own significant word-tokens
+ * (course tags, skill/domain/soft-skill names) as a fallback so items the
+ * LLM didn't literally quote are still visually tied back to the JD text.
+ */
+function extractHighlightTerms(rationale, suggestedNames) {
+  const terms = new Set();
+
+  // 1) Quoted phrases inside rationale bullets - the strongest signal,
+  //    since the LLM's own prompt asks it to quote/reference JD text
+  //    verbatim to justify each choice.
+  (rationale || []).forEach(bullet => {
+    if (!bullet) return;
+    const quoteRe = /['"“”‘’]([^'"“”‘’]{3,60})['"“”‘’]/g;
+    let m;
+    while ((m = quoteRe.exec(bullet)) !== null) {
+      const phrase = m[1].trim();
+      if (phrase.length >= 3) terms.add(phrase);
+    }
+  });
+
+  // 2) Fallback: significant tokens from every suggested item's own name
+  //    (courses/skills/domains/soft-skills), so items not directly quoted
+  //    are still highlighted if their own name-words appear in the JD.
+  (suggestedNames || []).forEach(name => {
+    tokenizeForRationaleMatch(name).forEach(tok => terms.add(tok));
+  });
+
+  // Longer phrases first, so a full quoted phrase is highlighted as one
+  // unit rather than being fragmented by a shorter overlapping token match.
+  return Array.from(terms).sort((a, b) => b.length - a.length);
+}
+
+/**
+ * Renders currentJdText into the Job Description panel with `terms`
+ * case-insensitively bolded. HTML-escapes the JD text FIRST (so pasted JD
+ * text is never treated as raw HTML), then performs regex-based bolding on
+ * the already-escaped text using escaped/word-boundary-safe patterns.
+ */
+function renderJdWithHighlights(jdText, terms) {
+  if (!jdText) {
+    jdPanelEl.classList.remove('visible');
+    return;
+  }
+  const escaped = escapeHtml(jdText);
+  const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  // Sort by length descending (already done by extractHighlightTerms, kept
+  // defensively here too) so longer/more-specific phrases are matched and
+  // wrapped before any shorter, overlapping term could fragment them.
+  const sortedTerms = (terms || []).slice().sort((a, b) => b.length - a.length);
+
+  let html = escaped;
+  sortedTerms.forEach(term => {
+    const termEscapedHtml = escapeHtml(term);
+    if (!termEscapedHtml.trim()) return;
+    const pattern = new RegExp(`(${escapeRegex(termEscapedHtml)})`, 'gi');
+    // Avoid re-wrapping text already inside a <b> tag by checking a simple
+    // negative lookahead isn't feasible with plain RegExp reliably here, so
+    // instead we do a straightforward global replace - overlapping terms
+    // are rare in practice given the longest-first ordering, and any minor
+    // double-wrap is visually harmless (nested <b> just stays bold).
+    html = html.replace(pattern, '<b>$1</b>');
+  });
+  jdTextBoxEl.innerHTML = html;
+  jdPanelEl.classList.add('visible');
+}
+
+
+
 async function pollJobStatus(jobId, attempt) {
+
   attempt = attempt || 0;
   if (attempt > 60) {
     logLine('Timed out waiting for tailoring to finish. Check server logs.', 'err');
@@ -392,11 +791,30 @@ async function pollJobStatus(jobId, attempt) {
       const latest = job.tailored_versions[0];
       const filename = latest.pdf_path.split(/[\\/]/).pop();
       logLine(`Draft ready: <a class="pdf-link" href="/files/cvs/${filename}" target="_blank">View Draft PDF</a> — review the coursework below before the email is sent.`, 'ok');
+      // Task 3: render the model-analysis badge into its own dedicated
+      // container (near the PDF draft link), using the active tailoring
+      // mode from the API response, now that the job's status is
+      // "tailored". `job.mode` (top-level, from GET /api/jobs/{id}) is
+      // preferred since it's guaranteed to reflect the latest tailoring
+      // run; falls back to latest.mode for safety.
+      const activeMode = job.mode || latest.mode;
+      modeBadgeContainerEl.innerHTML = renderModeBadge(activeMode);
+      // Task 2: capture the latest run's rationale bullets so checklist
+      // rendering (courses/soft-skills/domains/skills) can attach
+      // info-icon tooltips explaining WHY each item was selected.
+      currentRationale = job.rationale || [];
+      // Task 2 (JD panel): capture the original pasted description text so
+      // it can be displayed with highlighted keywords once course/skill/
+      // domain options (and thus the set of "suggested" item names) have
+      // loaded below.
+      currentJdText = job.raw_description || '';
       submitBtn.disabled = false;
       currentJobId = jobId;
       loadCourseOptions(jobId);
       return;
+
     }
+
 
 
     if (job.status === 'tailor_failed') {
@@ -437,10 +855,27 @@ async function loadCourseOptions(jobId) {
     renderSkillList(skillsData.options);
     rolePhraseInputEl.value = domainsData.suggested_role || '';
     coursesPanel.classList.add('visible');
+
+    // Task 2 (JD panel): now that all "suggested" checklist items are
+    // known, build the highlight-term list (quoted rationale phrases +
+    // suggested item name-tokens, incl. course tags) and render the
+    // original Job Description text with those terms bolded.
+    const suggestedNames = [];
+    coursesData.options.filter(c => c.suggested).forEach(c => {
+      suggestedNames.push(c.name);
+      (c.tags || []).forEach(t => suggestedNames.push(t));
+    });
+    softSkillsData.options.filter(s => s.suggested).forEach(s => suggestedNames.push(s.phrase));
+    domainsData.options.filter(d => d.suggested).forEach(d => suggestedNames.push(d.domain));
+    skillsData.options.filter(s => s.suggested).forEach(s => suggestedNames.push(s.skill));
+
+    const highlightTerms = extractHighlightTerms(currentRationale, suggestedNames);
+    renderJdWithHighlights(currentJdText, highlightTerms);
   } catch (err) {
     logLine('Could not load course/soft-skill/domain/skill options: ' + err.message, 'err');
   }
 }
+
 
 
 
@@ -457,7 +892,9 @@ function renderCourseList(options) {
     const label = document.createElement('label');
     label.setAttribute('for', checkbox.id);
     label.innerHTML = `${course.name} <span class="grade">(Grade: ${course.grade})</span>` +
-      `<span class="match-badge">${course.match_percentage}% match</span>`;
+      `<span class="match-badge">${course.match_percentage}% match</span>` +
+      buildCourseRationaleTooltip(course);
+
     item.appendChild(checkbox);
     item.appendChild(label);
     courseListEl.appendChild(item);
@@ -477,7 +914,8 @@ function renderSoftSkillList(options) {
     const label = document.createElement('label');
     label.setAttribute('for', checkbox.id);
     label.innerHTML = `${skill.phrase}` +
-      `<span class="match-badge">${skill.match_percentage}% match</span>`;
+      `<span class="match-badge">${skill.match_percentage}% match</span>` +
+      buildRationaleTooltip(skill.phrase);
     item.appendChild(checkbox);
     item.appendChild(label);
     softSkillListEl.appendChild(item);
@@ -497,7 +935,8 @@ function renderDomainList(options) {
     const label = document.createElement('label');
     label.setAttribute('for', checkbox.id);
     label.innerHTML = `${domain.domain}` +
-      `<span class="match-badge">${domain.match_percentage}% match</span>`;
+      `<span class="match-badge">${domain.match_percentage}% match</span>` +
+      buildRationaleTooltip(domain.domain);
     item.appendChild(checkbox);
     item.appendChild(label);
     domainListEl.appendChild(item);
@@ -525,7 +964,8 @@ function renderSkillList(options) {
     const label = document.createElement('label');
     label.setAttribute('for', checkbox.id);
     label.innerHTML = `${skill.skill}` +
-      `<span class="match-badge">${skill.match_percentage}% match</span>`;
+      `<span class="match-badge">${skill.match_percentage}% match</span>` +
+      buildRationaleTooltip(skill.skill);
     item.appendChild(checkbox);
     item.appendChild(label);
     skillListEl.appendChild(item);
@@ -576,11 +1016,16 @@ finalizeCoursesBtn.addEventListener('click', async () => {
     const data = await res.json();
     const filename = data.pdf_path.split(/[\\/]/).pop();
     logLine(`CV updated: <a class="pdf-link" href="/files/cvs/${filename}?t=${Date.now()}" target="_blank">View Final PDF</a>`, 'ok');
+    if (data.mode) {
+      modeBadgeContainerEl.innerHTML = renderModeBadge(data.mode);
+    }
+
     if (data.email_sent) {
       logLine('Email sent successfully with your final tailored CV attached.', 'ok');
     } else {
       logLine('CV finalized, but the notification email failed to send. Check server logs / SMTP config.', 'warn');
     }
+
   } catch (err) {
     logLine('Error updating coursework/soft skills/domains: ' + err.message, 'err');
   } finally {

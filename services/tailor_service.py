@@ -175,15 +175,32 @@ async def tailor_cv_for_job(job_id: int, session: AsyncSession) -> CVTailored:
         allowed_skills = ts.flatten_pool(pool)
         courses_pool = ts.load_json(ts.COURSES_POOL_PATH)
 
-        api_key = os.getenv("ANTHROPIC_API_KEY")
-        mode = "anthropic-claude-sonnet-4-5" if api_key else "local-fallback-keyword-overlap"
-
+        # NOTE (multi-agent consensus upgrade): when at least Anthropic +
+        # OpenAI keys are both configured, use the ensemble pipeline
+        # (tailor_with_multi_agent_consensus) - Claude + GPT-4o tailor the
+        # JD independently in parallel, and Gemini (if GOOGLE_API_KEY is
+        # also set) arbitrates between them for a single reconciled result.
+        # This runs SYNCHRONOUSLY-BLOCKING SDK calls internally via worker
+        # threads with hard timeouts, so it's offloaded to a thread here via
+        # asyncio.to_thread to avoid blocking the FastAPI event loop.
+        # Falls back to the single-Anthropic-agent path (and finally the
+        # deterministic local ranker) exactly as before if the ensemble
+        # can't be used or fails entirely - see tailor_with_multi_agent_consensus()'s
+        # docstring for the full fallback hierarchy.
+        anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+        openai_key = os.getenv("OPENAI_API_KEY")
 
         try:
-            if api_key:
-                response = ts.tailor_with_anthropic(jd_text, pool)
+            if anthropic_key and openai_key:
+                response, mode = await asyncio.to_thread(
+                    ts.tailor_with_multi_agent_consensus, jd_text, pool, courses_pool
+                )
+            elif anthropic_key:
+                response = await asyncio.to_thread(ts.tailor_with_anthropic, jd_text, pool, courses_pool)
+                mode = "anthropic-claude-sonnet-4-5 (single-agent, openai key not configured)"
             else:
                 response = ts.tailor_with_fallback(jd_text, pool)
+                mode = "local-fallback-keyword-overlap"
         except Exception as e:
             # NOTE (bug fix, diagnosability): previously only the exception
             # message was logged here, which for a Pydantic ValidationError
@@ -197,13 +214,14 @@ async def tailor_cv_for_job(job_id: int, session: AsyncSession) -> CVTailored:
             # DEBUG level) so this is never silently missed in production
             # logs again.
             logger.exception(
-                "[tailor_service] LLM path failed for job_id=%s (%s); falling back to local ranker. "
+                "[tailor_service] LLM path(s) failed for job_id=%s (%s); falling back to local ranker. "
                 "If this is a Pydantic ValidationError, check the message above for which "
                 "guardrail/field rejected the LLM's response.",
                 job_id, e,
             )
             mode = "local-fallback-keyword-overlap (after LLM error)"
             response = ts.tailor_with_fallback(jd_text, pool)
+
 
         violations = ts.validate_authenticity(response, allowed_skills)
         if violations:
@@ -234,6 +252,20 @@ async def tailor_cv_for_job(job_id: int, session: AsyncSession) -> CVTailored:
         candidate_background = skills_txt_path.read_text(encoding="utf-8") if skills_txt_path.exists() else ""
         job_analysis = await asyncio.to_thread(ts.analyze_job_posting, jd_text, candidate_background)
 
+        # NOTE (semantic relevance scores feature): persist the 4
+        # LLM-judged 0-100 relevance-score arrays (skill_scores,
+        # soft_skill_scores, domain_scores, course_scores) produced by
+        # the LLM-based tailoring paths (tailor_with_anthropic() /
+        # tailor_with_openai() / _reconcile_with_gemini(), via
+        # _build_tailoring_prompts()'s shared instructions), so the
+        # human-in-the-loop pickers below can prefer genuine semantic
+        # relevance over their existing deterministic keyword-overlap
+        # heuristics. These default to empty lists for
+        # tailor_with_fallback() (the local, non-LLM ranker), so old/
+        # fallback-mode jobs simply fall back to the existing
+        # deterministic logic unchanged - see each
+        # get_*_options_with_suggestions() function's docstring in
+        # tailor_skills.py.
         tailored_fields = {
             "mode": mode,
             "categories": [c.model_dump() for c in response.categories],
@@ -246,6 +278,10 @@ async def tailor_cv_for_job(job_id: int, session: AsyncSession) -> CVTailored:
             "authenticity_violations": violations,
             "course_authenticity_violations": course_violations,
             "job_analysis": job_analysis,
+            "skill_scores": [s.model_dump() for s in response.skill_scores],
+            "soft_skill_scores": [s.model_dump() for s in response.soft_skill_scores],
+            "domain_scores": [s.model_dump() for s in response.domain_scores],
+            "course_scores": [s.model_dump() for s in response.course_scores],
         }
 
 
@@ -322,19 +358,52 @@ async def tailor_cv_for_job(job_id: int, session: AsyncSession) -> CVTailored:
         raise
 
 
+def _get_latest_semantic_scores(job_id: int, session: AsyncSession) -> dict:
+    """placeholder - not used; real implementation below is async."""
+    raise NotImplementedError
+
+
+async def _get_latest_tailored_fields(job_id: int, session: AsyncSession) -> dict:
+    """
+    Fetches the most recent CVTailored row for a job and returns its parsed
+    tailored_fields dict, or an empty dict if no tailoring run exists yet.
+    Shared helper for the get_*_options_for_job() wrapper functions below so
+    they can pass the stored semantic relevance-score arrays (skill_scores/
+    soft_skill_scores/domain_scores/course_scores) through to the picker
+    functions in tailor_skills.py, which prefer these genuine LLM-judged
+    scores over their deterministic keyword-overlap fallback logic when
+    available (old jobs / fallback-mode runs simply have empty score lists
+    here, so the pickers seamlessly fall back to their existing behavior).
+    """
+    result = await session.execute(
+        select(CVTailored)
+        .where(CVTailored.job_id == job_id)
+        .order_by(CVTailored.created_at.desc())
+        .limit(1)
+    )
+    latest = result.scalar_one_or_none()
+    if latest is None:
+        return {}
+    return json.loads(latest.tailored_fields_json)
+
+
 async def get_course_options_for_job(job_id: int, session: AsyncSession) -> list[dict]:
     """
     Returns every eligible ground-truth course (grade 80-100) annotated with
     a "suggested" flag reflecting what the deterministic algorithm would
     have picked for THIS job's JD text - powers the human-in-the-loop course
-    picker in the UI.
+    picker in the UI. Prefers the stored "course_scores" semantic relevance
+    scores from the most recent tailoring run, if available, falling back to
+    the deterministic keyword-tag heuristic for old/fallback-mode jobs.
     """
     job = await session.get(Job, job_id)
     if job is None:
         raise ValueError(f"Job with id={job_id} not found")
 
     courses_pool = ts.load_json(ts.COURSES_POOL_PATH)
-    return ts.get_course_options_with_suggestions(job.raw_description, courses_pool)
+    tailored_fields = await _get_latest_tailored_fields(job_id, session)
+    semantic_scores = tailored_fields.get("course_scores")
+    return ts.get_course_options_with_suggestions(job.raw_description, courses_pool, semantic_scores=semantic_scores)
 
 
 async def get_soft_skill_options_for_job(job_id: int, session: AsyncSession) -> list[dict]:
@@ -343,13 +412,18 @@ async def get_soft_skill_options_for_job(job_id: int, session: AsyncSession) -> 
     "suggested" flag reflecting what the deterministic ranker would have
     picked for THIS job's JD text, plus a match_percentage - powers the
     human-in-the-loop "Relevant Soft Skills" picker in the UI (mirrors
-    get_course_options_for_job()).
+    get_course_options_for_job()). Prefers the stored "soft_skill_scores"
+    semantic relevance scores from the most recent tailoring run, if
+    available, falling back to the deterministic keyword-overlap heuristic
+    for old/fallback-mode jobs.
     """
     job = await session.get(Job, job_id)
     if job is None:
         raise ValueError(f"Job with id={job_id} not found")
 
-    return ts.get_soft_skill_options_with_suggestions(job.raw_description)
+    tailored_fields = await _get_latest_tailored_fields(job_id, session)
+    semantic_scores = tailored_fields.get("soft_skill_scores")
+    return ts.get_soft_skill_options_with_suggestions(job.raw_description, semantic_scores=semantic_scores)
 
 
 async def get_domain_options_for_job(job_id: int, session: AsyncSession) -> dict:
@@ -359,13 +433,18 @@ async def get_domain_options_for_job(job_id: int, session: AsyncSession) -> dict
     picked for THIS job's JD text, plus a match_percentage and a
     "suggested_role" phrase - powers the human-in-the-loop "Target Role &
     Domains" picker in the UI (mirrors get_course_options_for_job() /
-    get_soft_skill_options_for_job()).
+    get_soft_skill_options_for_job()). Prefers the stored "domain_scores"
+    semantic relevance scores from the most recent tailoring run, if
+    available, falling back to the deterministic keyword-overlap heuristic
+    for old/fallback-mode jobs.
     """
     job = await session.get(Job, job_id)
     if job is None:
         raise ValueError(f"Job with id={job_id} not found")
 
-    return ts.get_domain_options_with_suggestions(job.raw_description, job_title=job.title)
+    tailored_fields = await _get_latest_tailored_fields(job_id, session)
+    semantic_scores = tailored_fields.get("domain_scores")
+    return ts.get_domain_options_with_suggestions(job.raw_description, job_title=job.title, semantic_scores=semantic_scores)
 
 
 async def get_skill_options_for_job(job_id: int, session: AsyncSession) -> list[dict]:
@@ -375,6 +454,10 @@ async def get_skill_options_for_job(job_id: int, session: AsyncSession) -> list[
     most recent tailoring run for this job actually included it, plus a
     match_percentage - powers the human-in-the-loop "Skills" picker in the
     UI (mirrors get_course_options_for_job() / get_soft_skill_options_for_job()).
+    Prefers the stored "skill_scores" semantic relevance scores from the
+    most recent tailoring run, if available, falling back to the
+    deterministic keyword-overlap heuristic (and the previously-selected
+    categories) for old/fallback-mode jobs.
     """
     job = await session.get(Job, job_id)
     if job is None:
@@ -385,21 +468,17 @@ async def get_skill_options_for_job(job_id: int, session: AsyncSession) -> list[
     # Prefer the actual categories chosen by the most recent tailoring run
     # (the TRUE algorithm suggestion), falling back to a fresh keyword
     # heuristic if no previous run exists yet.
+    previous_fields = await _get_latest_tailored_fields(job_id, session)
     previously_selected = None
-    result = await session.execute(
-        select(CVTailored)
-        .where(CVTailored.job_id == job_id)
-        .order_by(CVTailored.created_at.desc())
-        .limit(1)
-    )
-    latest = result.scalar_one_or_none()
-    if latest is not None:
-        previous_fields = json.loads(latest.tailored_fields_json)
+    if previous_fields:
         previously_selected = {
             c["name"]: c.get("skills", []) for c in previous_fields.get("categories", [])
         }
+    semantic_scores = previous_fields.get("skill_scores")
 
-    return ts.get_skill_options_with_suggestions(job.raw_description, pool, previously_selected=previously_selected)
+    return ts.get_skill_options_with_suggestions(
+        job.raw_description, pool, previously_selected=previously_selected, semantic_scores=semantic_scores
+    )
 
 
 async def finalize_courses_for_job(
@@ -704,7 +783,3 @@ async def finalize_courses_for_job(
         )
 
     return cv_tailored, email_sent
-
-
-
-

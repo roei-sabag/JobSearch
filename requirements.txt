@@ -8,5 +8,9 @@ python-dotenv
 jinja2
 playwright
 anthropic
+openai
+google-generativeai
 pdfplumber
 PyMuPDF
+
+

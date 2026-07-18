@@ -215,15 +215,58 @@ async def ingest_job_raw(
 
 
 
+def _extract_mode(tailored_fields_json: str) -> Optional[str]:
+    """Best-effort extraction of the 'mode' field from a CVTailored row's
+    stored JSON, used to power the UI's agent-mode badge. Never raises -
+    a malformed/missing field just yields None (badge omitted)."""
+    try:
+        return json.loads(tailored_fields_json).get("mode")
+    except Exception:
+        return None
+
+
 async def _get_tailored_versions(session: AsyncSession, job_id: int) -> List[CVTailoredOut]:
     result = await session.execute(
         select(CVTailored).where(CVTailored.job_id == job_id).order_by(CVTailored.created_at.desc())
     )
     rows = result.scalars().all()
     return [
-        CVTailoredOut(id=r.id, pdf_path=r.pdf_path, created_at=r.created_at)
+        CVTailoredOut(
+            id=r.id,
+            pdf_path=r.pdf_path,
+            created_at=r.created_at,
+            mode=_extract_mode(r.tailored_fields_json),
+        )
         for r in rows
     ]
+
+
+def _extract_rationale(tailored_fields_json: str) -> List[str]:
+    """Best-effort extraction of the 'rationale' bullet-point list from a
+    CVTailored row's stored JSON, used to power the UI's info-icon tooltips
+    explaining WHY each item was selected. Never raises - a malformed/
+    missing field just yields an empty list (no tooltip)."""
+    try:
+        rationale = json.loads(tailored_fields_json).get("rationale")
+        return rationale if isinstance(rationale, list) else []
+    except Exception:
+        return []
+
+
+async def _get_latest_rationale_and_mode(session: AsyncSession, job_id: int) -> tuple[List[str], Optional[str]]:
+    """Fetches the most recent CVTailored row for a job and returns its
+    (rationale, mode) tuple, or ([], None) if no tailoring run exists yet."""
+    result = await session.execute(
+        select(CVTailored)
+        .where(CVTailored.job_id == job_id)
+        .order_by(CVTailored.created_at.desc())
+        .limit(1)
+    )
+    latest = result.scalar_one_or_none()
+    if latest is None:
+        return [], None
+    return _extract_rationale(latest.tailored_fields_json), _extract_mode(latest.tailored_fields_json)
+
 
 
 @router.get("/{job_id}", response_model=JobOut)
@@ -236,6 +279,7 @@ async def get_job(job_id: int, session: AsyncSession = Depends(get_session)):
         comp = await session.get(Company, job.company_id)
         company_name = comp.name if comp else None
     tailored_versions = await _get_tailored_versions(session, job_id)
+    rationale, mode = await _get_latest_rationale_and_mode(session, job_id)
     return JobOut(
         id=job.id,
         title=job.title,
@@ -248,6 +292,8 @@ async def get_job(job_id: int, session: AsyncSession = Depends(get_session)):
         created_at=job.created_at,
         updated_at=job.updated_at,
         tailored_versions=tailored_versions,
+        rationale=rationale,
+        mode=mode,
     )
 
 
@@ -467,7 +513,9 @@ async def finalize_job_courses(
         seeking_line=tailored_fields.get("seeking_line", ""),
         title_line=tailored_fields.get("title_line", ""),
         email_sent=email_sent,
+        mode=tailored_fields.get("mode"),
     )
+
 
 
 

@@ -1,0 +1,1 @@
+29 multi-agent-consensus(anthropic+openai+gemini-arbiter) (courses + soft skills manually finalized by user) + role/domains manually finalized by user + title line manually finalized by user + skills manually finalized by user

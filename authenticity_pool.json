@@ -14,11 +14,19 @@
     "Strong Motivation",
     "Strong Problem Solver",
     "Performance-Driven Mindset",
-    "Performance-Focused Mindset"
+    "Performance-Focused Mindset",
+    "Good debugging skills",
+    "Strong knowledge of Digital Systems",
+    "Excellent Debugging Skills",
+    "Strong focus on performance",
+    "Motivation to grow",
+    "High proficiency in English",
+    "Ability to work under constraints",
+    "Problem-Solving Mindset"
   ],
   "authentic_seeking_domains": [
     "Hardware Verification",
-    "DFT (Design for Test)",
+    "DFT",
     "RTL Design",
     "FPGA Development",
     "Digital Design",
@@ -33,7 +41,8 @@
     "Hardware Integration",
     "Chip Design",
     "Firmware Development",
-    "AI-Assisted Engineering"
+    "AI-Assisted Engineering",
+    "DFT (Design for Test)"
   ],
   "soft_skill_bank": [
     {

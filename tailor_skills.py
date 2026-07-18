@@ -39,16 +39,21 @@ specifically so it can target a job-specific output path without needing a
 separate implementation.
 """
 
+import concurrent.futures
+import logging
 import os
 import re
 import json
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, field_validator
 from jinja2 import Environment, FileSystemLoader
+
+logger = logging.getLogger("tailor_skills")
+
 
 # --------------------------------------------------------------------------- #
 # Configuration / Layout-safety guardrails
@@ -490,6 +495,24 @@ class SkillCategory(BaseModel):
         return v
 
 
+class RelevanceScore(BaseModel):
+    """
+    A single (name, score) pair expressing how relevant a specific
+    ground-truth item (a hard skill, a soft-skill bank phrase, an authentic
+    seeking-domain, or a course) is to the CURRENT job description, on a
+    0-100 scale, as judged by the LLM doing the tailoring. These scores are
+    purely ADDITIVE metadata for the human-in-the-loop pickers (they never
+    grant permission to fabricate/include anything - the existing
+    authenticity guardrails still gate what can actually appear in the
+    rendered CV). `name` must exactly match the ground-truth item's own
+    identifier (skill string, soft-skill bank phrase, authentic domain name,
+    or course name) so it can be looked up by the picker code without fuzzy
+    matching.
+    """
+    name: str
+    score: int = Field(..., ge=0, le=100)
+
+
 class TailoredSkillsResponse(BaseModel):
     categories: List[SkillCategory] = Field(..., max_length=MAX_CATEGORIES)
 
@@ -527,6 +550,33 @@ class TailoredSkillsResponse(BaseModel):
     omitted: List[str] = Field(
         default_factory=list,
         description="Skills from the pool that were deliberately left out or de-prioritized, with reasons folded in as 'Skill - reason' strings.",
+    )
+
+    # --- Semantic relevance scores (additive metadata, never a fabrication gate) ---
+    # Populated by the LLM-based tailoring paths (tailor_with_openai() /
+    # _reconcile_with_gemini(), via _build_tailoring_prompts()'s shared
+    # instructions) with a 0-100 relevance score for EVERY ground-truth item
+    # in each respective bank, so the human-in-the-loop pickers can rank by
+    # genuine semantic relevance rather than only keyword-overlap heuristics.
+    # Default to an empty list (never required) so tailor_with_anthropic()'s
+    # own prompt/schema and tailor_with_fallback()'s deterministic path (and
+    # any OLD CVTailored row persisted before this feature existed) remain
+    # fully valid without ever needing to supply them.
+    skill_scores: List[RelevanceScore] = Field(
+        default_factory=list,
+        description="0-100 relevance score for EVERY skill in the ground-truth skills_pool.json (name must exactly match the skill string).",
+    )
+    soft_skill_scores: List[RelevanceScore] = Field(
+        default_factory=list,
+        description="0-100 relevance score for EVERY phrase in the soft-skill bank (name must exactly match the bank's 'phrase' string).",
+    )
+    domain_scores: List[RelevanceScore] = Field(
+        default_factory=list,
+        description="0-100 relevance score for EVERY authentic seeking-domain (name must exactly match an entry in AUTHENTIC_SEEKING_DOMAINS).",
+    )
+    course_scores: List[RelevanceScore] = Field(
+        default_factory=list,
+        description="0-100 relevance score for EVERY course in the ground-truth courses_pool.json (name must exactly match the course's 'name' string).",
     )
 
     @field_validator("soft_skills_line")
@@ -829,12 +879,29 @@ def validate_authenticity(response: TailoredSkillsResponse, allowed_skills: List
 # LLM path (Anthropic Claude)
 # --------------------------------------------------------------------------- #
 
-def tailor_with_anthropic(jd_text: str, pool: dict) -> TailoredSkillsResponse:
+def tailor_with_anthropic(jd_text: str, pool: dict, courses_pool: Optional[dict] = None) -> TailoredSkillsResponse:
     import anthropic
 
     client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from env
 
     allowed_skills_flat = flatten_pool(pool)
+
+    # NOTE (course_scores semantic-relevance fix): courses_pool is now
+    # accepted so this agent can be asked for REAL 0-100 semantic relevance
+    # scores per course (mirroring skill_scores/soft_skill_scores/
+    # domain_scores), instead of always returning an empty course_scores
+    # list. Only eligible (grade 80-100) course NAMES are exposed to the
+    # LLM here - never raw grades - since the actual course
+    # selection/authenticity check remains fully deterministic
+    # (select_relevant_courses() / validate_courses_authenticity()); this
+    # score is purely additive UI metadata, never a fabrication gate.
+    if courses_pool is None:
+        courses_pool = load_json(COURSES_POOL_PATH)
+    eligible_course_names = [
+        c["name"] for c in courses_pool.get("courses", [])
+        if c.get("grade") is not None and MIN_COURSE_GRADE <= c["grade"] <= MAX_COURSE_GRADE
+    ]
+
 
     system_prompt = f"""You are an expert technical resume editor. You must select, prioritize, and
 categorize skills for a candidate's CV "Skills" section, based STRICTLY on a
@@ -919,6 +986,28 @@ Also produce:
 - "omitted": skills from the pool that were deliberately de-prioritized or
   left out, with a short reason each.
 
+=== SEMANTIC RELEVANCE SCORES ===
+In ADDITION to the above, you must ALSO produce four relevance-score arrays,
+each providing a 0-100 relevance score (100 = extremely relevant to this
+specific JD, 0 = completely irrelevant) for EVERY SINGLE item in the
+respective ground-truth bank below (not just the ones you selected above -
+EVERY item must get a score, even a low one). These scores power a
+human-in-the-loop UI picker, and are purely additive metadata - they never
+grant permission to fabricate/include anything not otherwise allowed.
+  - "skill_scores": one {{"name": <skill>, "score": <0-100>}} entry for
+    EVERY skill across ALL categories in the ground-truth skills pool below
+    (name must exactly match the skill string).
+  - "soft_skill_scores": one {{"name": <phrase>, "score": <0-100>}} entry
+    for EVERY phrase in this soft-skill bank: {[e["phrase"] for e in SOFT_SKILL_BANK]}
+  - "domain_scores": one {{"name": <domain>, "score": <0-100>}} entry for
+    EVERY domain in this authentic bank: {AUTHENTIC_SEEKING_DOMAINS}
+  - "course_scores": one {{"name": <course name>, "score": <0-100>}} entry
+    for EVERY course in this list of the candidate's real completed courses
+    (name must exactly match the string given here): {eligible_course_names}
+    Score how semantically relevant each course's subject matter is to this
+    JD. Which courses actually appear on the CV is still decided
+    deterministically elsewhere - this score is purely additive metadata.
+
 
 HARD LAYOUT CONSTRAINTS (to preserve a fixed-layout PDF template):
 - Return AT MOST {MAX_CATEGORIES} skill categories (use the same category names as the pool, or a subset).
@@ -939,7 +1028,11 @@ Respond ONLY with a single valid JSON object matching this exact schema (no mark
 
 
   "rationale": ["<short bullet explaining why a skill/trait/domain was prioritized, referencing the JD keyword it maps to>", "..."],
-  "omitted": ["<skill or category - short reason it was de-prioritized/omitted>", "..."]
+  "omitted": ["<skill or category - short reason it was de-prioritized/omitted>", "..."],
+  "skill_scores": [{{"name": "<skill>", "score": <0-100>}}, "..."],
+  "soft_skill_scores": [{{"name": "<phrase>", "score": <0-100>}}, "..."],
+  "domain_scores": [{{"name": "<domain>", "score": <0-100>}}, "..."],
+  "course_scores": [{{"name": "<course name>", "score": <0-100>}}, "..."]
 }}
 
 Ground-truth skills pool (the ONLY allowed hard skills):
@@ -961,9 +1054,28 @@ system prompt. Return valid JSON only."""
     # and reproducible as possible run-to-run for the SAME JD (still genuinely
     # JD-specific across DIFFERENT JDs, since the mapping is driven by the
     # actual JD text) - important for an auditable hiring-facing pipeline.
+    # NOTE (bug fix, root cause of "multi-agent consensus always falls back
+    # to single-agent(openai-only)"): this call previously used
+    # max_tokens=1500, which is far too small once the shared prompt
+    # (_build_tailoring_prompts) started requiring FOUR full relevance-score
+    # arrays (skill_scores/soft_skill_scores/domain_scores/course_scores) -
+    # one entry per item across the ENTIRE skills/courses/domains/soft-skill
+    # pools, on top of the original categories/rationale/omitted fields.
+    # That response is genuinely large (multiple thousands of tokens), so
+    # Claude's output was silently TRUNCATED mid-JSON-object
+    # (stop_reason="max_tokens"), which then failed json.loads() with a
+    # generic "Expecting ',' delimiter" error deep inside the JSON - this
+    # made tailor_with_anthropic() fail on essentially every real-world JD,
+    # so _run_agents_in_parallel() always reported anthropic as failed and
+    # tailor_with_multi_agent_consensus() always took the
+    # "b_ok and not a_ok" branch -> permanently
+    # "single-agent(openai-only, ...)", bypassing dual-agent/consensus even
+    # though ANTHROPIC_API_KEY was perfectly valid. Raised to 4096 (safe
+    # ceiling well above what a genuinely complete response needs) to fix
+    # this at the root.
     message = client.messages.create(
         model=ANTHROPIC_MODEL,
-        max_tokens=1500,
+        max_tokens=4096,
         temperature=0,
         system=system_prompt,
         messages=[{"role": "user", "content": user_prompt}],
@@ -974,12 +1086,37 @@ system prompt. Return valid JSON only."""
         block.text for block in message.content if getattr(block, "type", None) == "text"
     ).strip()
 
+    # NOTE (diagnosability fix): explicitly flag truncated responses
+    # (stop_reason == "max_tokens") as their own distinct, actionable error
+    # message BEFORE attempting to parse JSON, rather than letting them fall
+    # through to a generic/confusing JSONDecodeError deep inside
+    # json.loads() - this is exactly the failure mode that silently forced
+    # every run onto the single-agent(openai-only) fallback path (see NOTE
+    # above), so if it ever regresses again (e.g. prompt grows further) it
+    # must be immediately obvious in the logs WHY, not just "bad JSON".
+    if getattr(message, "stop_reason", None) == "max_tokens":
+        raise ValueError(
+            f"Anthropic response was TRUNCATED (stop_reason=max_tokens, "
+            f"max_tokens={4096}, response_len={len(raw_text)} chars). The "
+            f"prompt/response is too large for the current token budget - "
+            f"increase max_tokens further or shrink the requested payload. "
+            f"Truncated tail:\n{raw_text[-300:]}"
+        )
+
     # Extract JSON block defensively in case the model wraps it in markdown fences
     match = re.search(r"\{.*\}", raw_text, re.DOTALL)
     if not match:
         raise ValueError(f"Could not locate JSON in LLM response:\n{raw_text}")
 
-    data = json.loads(match.group(0))
+    try:
+        data = json.loads(match.group(0))
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            f"Failed to parse JSON from Anthropic response (stop_reason="
+            f"{getattr(message, 'stop_reason', None)}): {e}. "
+            f"Raw response length={len(raw_text)} chars."
+        ) from e
+
 
     # Grow the authenticity pool (traits/domains) BEFORE Pydantic validation,
     # so a genuinely-new-but-authentic domain the LLM surfaces for this JD is
@@ -996,8 +1133,528 @@ system prompt. Return valid JSON only."""
 
 
 # --------------------------------------------------------------------------- #
+# Multi-agent consensus pipeline (Anthropic + OpenAI, Gemini as arbiter)
+# --------------------------------------------------------------------------- #
+#
+# Architecture (see project_state.md / conversation log for full rationale):
+#   1. Claude (Agent A) and GPT-4o (Agent B) independently tailor the SAME JD
+#      against the SAME ground-truth pool, in PARALLEL (worker threads).
+#   2. Each candidate is independently validated (Pydantic schema +
+#      validate_authenticity()) before ever reaching the arbiter - a fabricated
+#      candidate is never presented to Gemini as "trustworthy input."
+#   3. Gemini (Agent C) acts as an ARBITER, not a free generator: it may only
+#      select/merge from the skills already present in candidate A's and/or
+#      candidate B's outputs (closed decision-space), and its own output is
+#      re-validated through the exact same guardrails as any other candidate.
+#   4. Bounded, explicit fallback hierarchy (see _reconcile_or_pick() below)
+#      -- never an open-ended loop, never a silent crash.
+#
+# NOTE: OPENAI_MODEL uses Structured Outputs (response_format=json_schema,
+# strict=True) so schema drift is constrained at the SDK level, not just via
+# post-hoc regex extraction (see tailor_with_anthropic()'s comment on why
+# Anthropic still needs the regex fallback - no native structured-output mode
+# there yet).
+OPENAI_MODEL = "gpt-4o-2024-08-06"
+GEMINI_MODEL = "gemini-2.5-flash"
+
+
+AGENT_CALL_TIMEOUT_SECONDS = 40
+ARBITER_CALL_TIMEOUT_SECONDS = 45
+
+
+
+def _tailored_skills_json_schema(for_gemini: bool = False) -> dict:
+    """
+    Hand-written JSON Schema mirroring TailoredSkillsResponse's shape, for
+    use with OpenAI's Structured Outputs (response_format=json_schema) and
+    Gemini's response_schema. Kept separate from
+    TailoredSkillsResponse.model_json_schema() because both providers are
+    stricter/different about allowed schema keywords than raw Pydantic
+    output:
+      - OpenAI's "strict" mode REQUIRES every object to set
+        "additionalProperties": false and list every property in "required".
+      - Gemini's response_schema does NOT recognize "additionalProperties"
+        at all (raises "Unknown field for Schema: additionalProperties"), so
+        for_gemini=True strips that key recursively.
+
+    Includes the 4 relevance-score arrays (skill_scores, soft_skill_scores,
+    domain_scores, course_scores) - each an array of {name, score} objects -
+    alongside the original fields, so OpenAI's Structured Outputs / Gemini's
+    response_schema both natively constrain/require these new fields too.
+    """
+    relevance_score_item = {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "score": {"type": "integer"},
+        },
+        "required": ["name", "score"],
+        "additionalProperties": False,
+    }
+    schema = {
+        "type": "object",
+        "properties": {
+            "categories": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "skills": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["name", "skills"],
+                    "additionalProperties": False,
+                },
+            },
+            "soft_skills_line": {"type": "string"},
+            "seeking_line": {"type": "string"},
+            "rationale": {"type": "array", "items": {"type": "string"}},
+            "omitted": {"type": "array", "items": {"type": "string"}},
+            "skill_scores": {"type": "array", "items": relevance_score_item},
+            "soft_skill_scores": {"type": "array", "items": relevance_score_item},
+            "domain_scores": {"type": "array", "items": relevance_score_item},
+            "course_scores": {"type": "array", "items": relevance_score_item},
+        },
+        "required": [
+            "categories", "soft_skills_line", "seeking_line", "rationale", "omitted",
+            "skill_scores", "soft_skill_scores", "domain_scores", "course_scores",
+        ],
+        "additionalProperties": False,
+    }
+    if for_gemini:
+        schema = json.loads(json.dumps(schema))  # deep copy
+        _strip_key_recursive(schema, "additionalProperties")
+    return schema
+
+
+def _strip_key_recursive(obj, key: str) -> None:
+    """Recursively removes every occurrence of `key` from a nested dict/list structure, in place."""
+    if isinstance(obj, dict):
+        obj.pop(key, None)
+        for v in obj.values():
+            _strip_key_recursive(v, key)
+    elif isinstance(obj, list):
+        for item in obj:
+            _strip_key_recursive(item, key)
+
+
+
+def _build_tailoring_prompts(jd_text: str, pool: dict, courses_pool: Optional[dict] = None) -> Tuple[str, str]:
+    """
+    Shared system+user prompt pair for the tailoring task, factored out of
+    tailor_with_anthropic() so tailor_with_openai() (and the Gemini arbiter)
+    can request the exact same task/constraints without prompt drift between
+    agents - critical for a fair ensemble (each agent must be solving the
+    identical problem, not subtly different ones).
+
+    Also instructs every agent to produce the 4 semantic relevance-score
+    arrays (skill_scores, soft_skill_scores, domain_scores, course_scores)
+    covering EVERY item in the respective ground-truth bank, mirroring the
+    instructions in tailor_with_anthropic()'s own system prompt.
+
+    courses_pool (NOTE - course_scores semantic-relevance fix): now accepted
+    so eligible (grade 80-100) course NAMES can be injected into the prompt,
+    letting this agent produce REAL 0-100 semantic relevance scores per
+    course instead of always returning an empty course_scores list. Only
+    course names are exposed here - never raw grades - since actual course
+    selection/authenticity remains fully deterministic elsewhere.
+    """
+    soft_skill_phrases = [e["phrase"] for e in SOFT_SKILL_BANK]
+    if courses_pool is None:
+        courses_pool = load_json(COURSES_POOL_PATH)
+    eligible_course_names = [
+        c["name"] for c in courses_pool.get("courses", [])
+        if c.get("grade") is not None and MIN_COURSE_GRADE <= c["grade"] <= MAX_COURSE_GRADE
+    ]
+    system_prompt = f"""You are an expert technical resume editor. You must select, prioritize, and
+categorize skills for a candidate's CV "Skills" section, based STRICTLY on a
+ground-truth inventory of the candidate's real skills. You are NEVER allowed
+to invent, add, or infer any HARD engineering skill/technology that is not
+explicitly present in the provided skills pool. Fabrication of a hard skill
+is a critical failure. You must ALSO generate two short dynamic text fields
+for the CV header.
+
+=== FIELD 1: "soft_skills_line" ===
+Exactly {SOFT_SKILLS_PHRASE_COUNT} ATOMIC (single-concept) soft-skill /
+character-trait phrases, each 2-4 words, joined as "Phrase 1, Phrase 2 and
+Phrase 3" (comma-separated, "and" before the FINAL phrase only - NO Oxford
+comma, and the word "or" must NEVER appear). Each phrase must express EXACTLY
+ONE trait idea - never join two traits with "&". Max {MAX_SOFT_SKILLS_LINE_CHARS} characters total.
+
+=== FIELD 2: "seeking_line" ===
+A single sentence of the EXACT merged form:
+  "Seeking a {{role}} Student position, with strong interest in {{domain1}}, {{domain2}} and {{domain3}}."
+{{role}} is derived from THIS JD, always followed by "Student" (never "Senior"/"Lead", never years of experience).
+Domains chosen ONLY from this authentic bank: {AUTHENTIC_SEEKING_DOMAINS}
+Join with "and" only (never "or"). Max {MAX_SEEKING_LINE_CHARS} characters total.
+
+Also produce "rationale" (bullet points mapping choices to JD phrases) and
+"omitted" (skills deliberately left out, with reasons).
+
+=== SEMANTIC RELEVANCE SCORES ===
+Also produce four relevance-score arrays, each a 0-100 relevance score
+(100 = extremely relevant to this JD, 0 = irrelevant) for EVERY SINGLE item
+in the respective ground-truth bank (not just the ones you selected above -
+every item must get a score):
+  - "skill_scores": one {{"name": <skill>, "score": <0-100>}} entry for
+    EVERY skill across ALL categories in the ground-truth skills pool below.
+  - "soft_skill_scores": one {{"name": <phrase>, "score": <0-100>}} entry
+    for EVERY phrase in this soft-skill bank: {soft_skill_phrases}
+  - "domain_scores": one {{"name": <domain>, "score": <0-100>}} entry for
+    EVERY domain in this authentic bank: {AUTHENTIC_SEEKING_DOMAINS}
+  - "course_scores": one {{"name": <course name>, "score": <0-100>}} entry
+    for EVERY course in this list: {eligible_course_names}
+    Score how semantically relevant each course's subject matter is to this JD.
+
+HARD LAYOUT CONSTRAINTS:
+- AT MOST {MAX_CATEGORIES} skill categories, AT MOST {MAX_SKILLS_PER_CATEGORY} skills each.
+- Each category's skills joined by ", " must be AT MOST {MAX_CATEGORY_LINE_CHARS} characters.
+- Order skills/categories by relevance to the JD (most relevant first).
+
+Respond ONLY with a single valid JSON object matching this exact schema (no markdown, no prose outside JSON):
+{{
+  "categories": [{{"name": "<category name>", "skills": ["<skill>", "..."]}}],
+  "soft_skills_line": "<phrase 1>, <phrase 2> and <phrase 3>",
+  "seeking_line": "Seeking a <role> Student position, with strong interest in <domain1>, <domain2> and <domain3>.",
+  "rationale": ["<short bullet>", "..."],
+  "omitted": ["<skill or category - short reason>", "..."],
+  "skill_scores": [{{"name": "<skill>", "score": <0-100>}}, "..."],
+  "soft_skill_scores": [{{"name": "<phrase>", "score": <0-100>}}, "..."],
+  "domain_scores": [{{"name": "<domain>", "score": <0-100>}}, "..."],
+  "course_scores": [{{"name": "<course name>", "score": <0-100>}}, "..."]
+}}
+
+Ground-truth skills pool (the ONLY allowed hard skills):
+{json.dumps(pool, indent=2)}
+"""
+    user_prompt = f"""Job Description:
+\"\"\"
+{jd_text}
+\"\"\"
+
+Select and prioritize the most relevant skills, soft_skills_line, and
+seeking_line for this specific job description, following all constraints in
+the system prompt. Return valid JSON only."""
+    return system_prompt, user_prompt
+
+
+def tailor_with_openai(jd_text: str, pool: dict, courses_pool: Optional[dict] = None) -> TailoredSkillsResponse:
+    """
+    Agent B of the multi-agent ensemble: same tailoring task as
+    tailor_with_anthropic(), but via OpenAI GPT-4o with native Structured
+    Outputs (response_format=json_schema, strict=True), which constrains the
+    model's own decoding to the schema rather than relying purely on
+    prompt-engineering + post-hoc regex extraction.
+    """
+    import openai
+
+    client = openai.OpenAI()  # reads OPENAI_API_KEY from env
+    system_prompt, user_prompt = _build_tailoring_prompts(jd_text, pool, courses_pool)
+
+
+    completion = client.chat.completions.create(
+        model=OPENAI_MODEL,
+        temperature=0,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        response_format={
+            "type": "json_schema",
+            "json_schema": {
+                "name": "tailored_skills_response",
+                "strict": True,
+                "schema": _tailored_skills_json_schema(),
+            },
+        },
+    )
+
+    raw_text = completion.choices[0].message.content
+    data = json.loads(raw_text)
+
+    # Same pool-growth step as the Anthropic path, so any new-but-authentic
+    # trait/domain GPT-4o surfaces is persisted/merged BEFORE Pydantic
+    # validation (otherwise the seeking_line validator could reject it as
+    # "fabricated" purely for not having been seen yet).
+    grow_authenticity_pool(data)
+
+    return TailoredSkillsResponse(**data)
+
+
+def _run_with_timeout(fn, timeout_seconds: float, *args, **kwargs):
+    """
+    Runs a blocking (sync SDK) call in a worker thread with a hard wall-clock
+    timeout, raising TimeoutError if exceeded. Used for every individual
+    agent call in the ensemble so one slow/hanging provider can never block
+    the whole pipeline past its allotted budget.
+    """
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(fn, *args, **kwargs)
+        return future.result(timeout=timeout_seconds)
+
+
+def _run_agents_in_parallel(jd_text: str, pool: dict, courses_pool: Optional[dict] = None) -> dict:
+    """
+    Runs tailor_with_anthropic() and tailor_with_openai() CONCURRENTLY (each
+    in its own worker thread, each with its own timeout), and independently
+    validates each candidate that comes back. Returns a dict:
+        {
+          "anthropic": {"response": TailoredSkillsResponse|None, "error": str|None},
+          "openai":    {"response": TailoredSkillsResponse|None, "error": str|None},
+        }
+    Never raises - every failure (timeout, API error, validation error) is
+    captured per-agent so the caller can apply the fallback hierarchy.
+    """
+    results = {"anthropic": {"response": None, "error": None},
+               "openai": {"response": None, "error": None}}
+
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+    openai_key = os.getenv("OPENAI_API_KEY")
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        futures = {}
+        if anthropic_key:
+            futures[executor.submit(
+                _run_with_timeout, tailor_with_anthropic, AGENT_CALL_TIMEOUT_SECONDS, jd_text, pool, courses_pool
+            )] = "anthropic"
+        else:
+            results["anthropic"]["error"] = "ANTHROPIC_API_KEY not configured"
+
+        if openai_key:
+            futures[executor.submit(
+                _run_with_timeout, tailor_with_openai, AGENT_CALL_TIMEOUT_SECONDS, jd_text, pool, courses_pool
+            )] = "openai"
+        else:
+            results["openai"]["error"] = "OPENAI_API_KEY not configured"
+
+        for future in concurrent.futures.as_completed(futures):
+            agent_name = futures[future]
+            try:
+                results[agent_name]["response"] = future.result()
+            except Exception as e:
+                logger.exception("[tailor_skills] Agent '%s' failed during multi-agent tailoring", agent_name)
+                results[agent_name]["error"] = f"{type(e).__name__}: {e}"
+
+    return results
+
+
+def _candidate_to_dict(response: TailoredSkillsResponse) -> dict:
+    return {
+        "categories": [c.model_dump() for c in response.categories],
+        "soft_skills_line": response.soft_skills_line,
+        "seeking_line": response.seeking_line,
+        "rationale": response.rationale,
+        "omitted": response.omitted,
+        "skill_scores": [s.model_dump() for s in response.skill_scores],
+        "soft_skill_scores": [s.model_dump() for s in response.soft_skill_scores],
+        "domain_scores": [s.model_dump() for s in response.domain_scores],
+        "course_scores": [s.model_dump() for s in response.course_scores],
+    }
+
+
+def _reconcile_with_gemini(jd_text: str, pool: dict, candidate_a: dict, candidate_b: dict) -> TailoredSkillsResponse:
+    """
+    Agent C (arbiter): given the JD, the ground-truth pool, and BOTH
+    candidates' full outputs, produces a single reconciled
+    TailoredSkillsResponse. Uses Gemini's native response_schema (constrained
+    JSON decoding) rather than relying on regex extraction.
+
+    CRITICAL zero-fabrication constraint enforced at the PROMPT level (belt):
+    the arbiter is explicitly instructed it may ONLY select/combine skills
+    that already appear in candidate_a or candidate_b - it is NOT permitted
+    to introduce any skill absent from both. This is reinforced at the
+    STRUCTURAL level (suspenders) by the fact both candidates were already
+    filtered through validate_authenticity() against the ground-truth pool
+    before ever reaching this function (see tailor_with_multi_agent_consensus()),
+    so their union is itself still 100% ground-truth-authentic by
+    construction. The arbiter's raw output is ALSO re-validated by the exact
+    same TailoredSkillsResponse Pydantic guardrails as any other candidate
+    before being trusted by the caller - no new trust is granted to the
+    arbiter's output vs. any other model's.
+
+    The arbiter is ALSO instructed to reconcile the 4 relevance-score arrays
+    (skill_scores, soft_skill_scores, domain_scores, course_scores) from
+    both candidates, e.g. by averaging or picking whichever candidate's
+    score for a given item seems best justified - these scores are purely
+    additive metadata and are never subject to the zero-fabrication
+    constraint (a score is not a "skill claim").
+    """
+    import google.generativeai as genai
+
+    genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+
+    system_prompt = f"""You are an impartial technical resume arbiter. You are given a job
+description, a candidate's ground-truth skills pool, and TWO independently-
+generated tailoring proposals (from two different AI models) for the SAME
+job description. Your task is to produce ONE final, reconciled proposal that
+combines the best/most-relevant choices from both.
+
+CRITICAL RULE (zero fabrication): you may ONLY select or combine skills that
+ALREADY appear in Candidate A's or Candidate B's "categories" below. You are
+NOT permitted to add, invent, or infer any skill absent from BOTH candidates,
+even if you believe it would be a good fit. If both candidates disagree on a
+skill's relevance, choose whichever is more clearly justified by the JD text;
+do not synthesize a new composite skill.
+
+For "soft_skills_line" and "seeking_line": you may choose either candidate's
+version verbatim, or recombine individual PHRASES/DOMAINS that already
+appear in at least one candidate's version - never invent a new phrase/domain
+that appears in neither. seeking_line domains must come only from this
+authentic bank: {AUTHENTIC_SEEKING_DOMAINS}
+
+Also reconcile the 4 relevance-score arrays (skill_scores, soft_skill_scores,
+domain_scores, course_scores) from both candidates - for each named item,
+use your judgment to produce a single best 0-100 score (e.g. average the two
+candidates' scores, or pick whichever seems best justified by the JD). These
+scores are purely descriptive metadata, not subject to the zero-fabrication
+rule above - you may score EVERY item in the ground-truth pool/banks even if
+neither candidate scored it, as long as every item from the pool ultimately
+gets a score in your output. Return an empty list [] for course_scores
+(courses are scored deterministically elsewhere, not by you).
+
+Respond ONLY with a single JSON object matching this exact schema:
+{{
+  "categories": [{{"name": "<category name>", "skills": ["<skill>", "..."]}}],
+  "soft_skills_line": "<phrase 1>, <phrase 2> and <phrase 3>",
+  "seeking_line": "Seeking a <role> Student position, with strong interest in <domain1>, <domain2> and <domain3>.",
+  "rationale": ["<short bullet explaining each reconciliation decision>", "..."],
+  "omitted": ["<skill or category - short reason>", "..."],
+  "skill_scores": [{{"name": "<skill>", "score": <0-100>}}, "..."],
+  "soft_skill_scores": [{{"name": "<phrase>", "score": <0-100>}}, "..."],
+  "domain_scores": [{{"name": "<domain>", "score": <0-100>}}, "..."],
+  "course_scores": []
+}}
+
+Layout constraints (must still be respected): at most {MAX_CATEGORIES} categories,
+at most {MAX_SKILLS_PER_CATEGORY} skills per category, each category's skills
+joined by ", " at most {MAX_CATEGORY_LINE_CHARS} characters, soft_skills_line
+at most {MAX_SOFT_SKILLS_LINE_CHARS} characters, seeking_line at most
+{MAX_SEEKING_LINE_CHARS} characters.
+"""
+
+    user_prompt = f"""Job Description:
+\"\"\"
+{jd_text}
+\"\"\"
+
+Ground-truth skills pool (context only - candidates already respected this):
+{json.dumps(pool, indent=2)}
+
+Candidate A (Anthropic Claude):
+{json.dumps(candidate_a, indent=2)}
+
+Candidate B (OpenAI GPT-4o):
+{json.dumps(candidate_b, indent=2)}
+
+Produce the single reconciled JSON object now."""
+
+    model = genai.GenerativeModel(
+        GEMINI_MODEL,
+        system_instruction=system_prompt,
+        generation_config=genai.types.GenerationConfig(
+            temperature=0,
+            response_mime_type="application/json",
+            response_schema=_tailored_skills_json_schema(for_gemini=True),
+        ),
+    )
+
+    result = model.generate_content(user_prompt)
+    data = json.loads(result.text)
+
+    # Same pool-growth step as the other two agents.
+    grow_authenticity_pool(data)
+
+    return TailoredSkillsResponse(**data)
+
+
+def tailor_with_multi_agent_consensus(jd_text: str, pool: dict, courses_pool: Optional[dict] = None) -> Tuple[TailoredSkillsResponse, str]:
+
+    """
+    Full ensemble orchestrator: runs Claude + GPT-4o in parallel, then Gemini
+    as an arbiter over both, following the exact fallback hierarchy below.
+    Returns (response, mode) where `mode` transparently records which agents
+    actually contributed to the final result - mirrors the existing
+    `mode` string pattern already used throughout this module/tailor_service.py,
+    so every CVTailored row's audit trail stays equally inspectable.
+
+    Fallback hierarchy (never fails silently, never hangs indefinitely):
+      A ok, B ok, Arbiter ok      -> arbiter's reconciled output
+      A ok, B ok, Arbiter fails   -> tiebreak between A/B (prefer the one with
+                                      zero authenticity violations; prefer A
+                                      if both are clean)
+      A ok, B fails               -> A only
+      A fails, B ok               -> B only
+      A fails, B fails            -> caller (tailor_service.py) falls back to
+                                      tailor_with_fallback() - this function
+                                      raises to signal "no LLM agent succeeded"
+    """
+    allowed_skills_flat = flatten_pool(pool)
+    agent_results = _run_agents_in_parallel(jd_text, pool, courses_pool)
+
+    a_result = agent_results["anthropic"]
+    b_result = agent_results["openai"]
+    a_ok = a_result["response"] is not None
+    b_ok = b_result["response"] is not None
+
+    if not a_ok and not b_ok:
+        raise RuntimeError(
+            f"Both agents failed: anthropic={a_result['error']!r}, openai={b_result['error']!r}"
+        )
+
+    if a_ok and not b_ok:
+        return a_result["response"], f"single-agent(anthropic-only, openai-failed: {b_result['error']})"
+
+    if b_ok and not a_ok:
+        return b_result["response"], f"single-agent(openai-only, anthropic-failed: {a_result['error']})"
+
+    # Both A and B succeeded - attempt Gemini arbitration (ONE attempt, no loop).
+    candidate_a = _candidate_to_dict(a_result["response"])
+    candidate_b = _candidate_to_dict(b_result["response"])
+
+    gemini_key = os.getenv("GOOGLE_API_KEY")
+    if not gemini_key:
+        return _tiebreak(a_result["response"], b_result["response"], allowed_skills_flat), \
+            "dual-agent(anthropic+openai, arbiter-skipped: no GOOGLE_API_KEY)"
+
+    try:
+        arbiter_response = _run_with_timeout(
+            _reconcile_with_gemini, ARBITER_CALL_TIMEOUT_SECONDS, jd_text, pool, candidate_a, candidate_b
+        )
+        return arbiter_response, "multi-agent-consensus(anthropic+openai+gemini-arbiter)"
+    except Exception as e:
+        # Any arbiter failure (timeout, API error, or Pydantic validation
+        # error on its output) falls straight back to the deterministic
+        # tiebreak between the two already-validated candidates - bounded,
+        # single-attempt, never a retry loop.
+        logger.warning(
+            "[tailor_skills] Gemini arbiter failed/timed out (%s); falling back to A/B tiebreak.", e
+        )
+        return _tiebreak(a_result["response"], b_result["response"], allowed_skills_flat), \
+            f"dual-agent(anthropic+openai, arbiter-failed: {e})"
+
+
+
+def _tiebreak(response_a: TailoredSkillsResponse, response_b: TailoredSkillsResponse,
+              allowed_skills_flat: List[str]) -> TailoredSkillsResponse:
+    """
+    Deterministic tiebreak used when both A and B succeeded but the arbiter
+    could not be used/trusted: prefer whichever candidate has ZERO
+    validate_authenticity() violations; if both are clean (the common case,
+    since both already passed their own schema guardrails), prefer A
+    (Claude) as the historically-proven primary - preserves today's default
+    behavior rather than introducing new nondeterminism.
+    """
+    violations_a = validate_authenticity(response_a, allowed_skills_flat)
+    violations_b = validate_authenticity(response_b, allowed_skills_flat)
+    if violations_a and not violations_b:
+        return response_b
+    return response_a
+
+
+# --------------------------------------------------------------------------- #
 # Job Analysis (dedicated, unconstrained LLM call for the notification email)
 # --------------------------------------------------------------------------- #
+
 
 def analyze_job_posting(jd_text: str, candidate_background: str) -> dict:
     """
@@ -1371,9 +2028,33 @@ def _keyword_match_percentage(item_keywords: List[str], jd_tokens: set) -> int:
     return round((matched / len(item_keywords)) * 100)
 
 
+def _semantic_scores_lookup(semantic_scores: Optional[List[dict]]) -> dict:
+    """
+    Normalizes a list of {"name": ..., "score": ...} dicts (as stored in
+    tailored_fields, e.g. "skill_scores"/"soft_skill_scores"/"domain_scores"/
+    "course_scores") into a simple {name_lower: score} lookup dict, for O(1)
+    lookups by the picker functions below. Returns an empty dict for None/
+    empty input (e.g. an old CVTailored row persisted before this feature
+    existed, or a fallback-mode run that never produced LLM semantic scores)
+    so callers can seamlessly fall back to their existing deterministic
+    keyword-overlap logic with a simple "if not found" check.
+    """
+    if not semantic_scores:
+        return {}
+    lookup = {}
+    for entry in semantic_scores:
+        name = entry.get("name") if isinstance(entry, dict) else None
+        score = entry.get("score") if isinstance(entry, dict) else None
+        if name is not None and score is not None:
+            lookup[name.strip().lower()] = score
+    return lookup
 
 
-def get_course_options_with_suggestions(jd_text: str, courses_pool: dict) -> List[dict]:
+
+
+def get_course_options_with_suggestions(
+    jd_text: str, courses_pool: dict, semantic_scores: Optional[List[dict]] = None
+) -> List[dict]:
     """
     Returns EVERY eligible course from the ground-truth pool (grade 80-100),
     each annotated with a "suggested" boolean flag reflecting whether the
@@ -1384,22 +2065,41 @@ def get_course_options_with_suggestions(jd_text: str, courses_pool: dict) -> Lis
     the algorithm's course suggestions rather than blindly trusting a
     keyword-tag heuristic that can occasionally surface a technically-tag-
     matching but not-truly-relevant course.
+
+    semantic_scores (optional): the stored "course_scores" list from a prior
+    LLM-based tailoring run's tailored_fields (see services/tailor_service.py),
+    a list of {"name": <course name>, "score": <0-100>} dicts. When a
+    semantic score is available for a given course, it REPLACES the
+    deterministic match_percentage (genuine LLM-judged relevance beats a
+    keyword-tag heuristic) and also feeds "suggested" (score >= 50 counts
+    as a suggestion). Courses with no semantic score fall back to the
+    existing deterministic logic unchanged - this keeps OLD jobs (tailored
+    before this feature existed, or via the local fallback ranker which
+    doesn't produce course_scores) working exactly as before.
     """
     suggested = select_relevant_courses(jd_text, courses_pool)
     suggested_names = {c["name"] for c in suggested}
     jd_tokens = set(re.findall(r"[a-zA-Z]+", jd_text.lower()))
+    scores_lookup = _semantic_scores_lookup(semantic_scores)
 
     options = []
     for course in courses_pool.get("courses", []):
         grade = course.get("grade")
         if grade is None or grade < MIN_COURSE_GRADE or grade > MAX_COURSE_GRADE:
             continue
+        name_key = course["name"].strip().lower()
+        if name_key in scores_lookup:
+            match_percentage = scores_lookup[name_key]
+            is_suggested = match_percentage >= 85
+        else:
+            match_percentage = _keyword_match_percentage(course.get("tags", []), jd_tokens)
+            is_suggested = course["name"] in suggested_names
         options.append({
             "name": course["name"],
             "grade": grade,
             "tags": course.get("tags", []),
-            "suggested": course["name"] in suggested_names,
-            "match_percentage": _keyword_match_percentage(course.get("tags", []), jd_tokens),
+            "suggested": is_suggested,
+            "match_percentage": match_percentage,
         })
 
     # Suggested-first ordering for a friendlier UI (algorithm's picks surface
@@ -1408,7 +2108,9 @@ def get_course_options_with_suggestions(jd_text: str, courses_pool: dict) -> Lis
     return options
 
 
-def get_soft_skill_options_with_suggestions(jd_text: str) -> List[dict]:
+def get_soft_skill_options_with_suggestions(
+    jd_text: str, semantic_scores: Optional[List[dict]] = None
+) -> List[dict]:
     """
     Returns EVERY entry in the growable SOFT_SKILL_BANK, each annotated with
     a "suggested" boolean flag (would the deterministic fallback ranker have
@@ -1417,8 +2119,16 @@ def get_soft_skill_options_with_suggestions(jd_text: str) -> List[dict]:
     that appear in the JD text). Mirrors get_course_options_with_suggestions()
     exactly, so the UI's "Relevant Soft Skills" picker behaves identically
     to the existing "Relevant Coursework" picker.
+
+    semantic_scores (optional): the stored "soft_skill_scores" list from a
+    prior LLM-based tailoring run's tailored_fields, a list of
+    {"name": <phrase>, "score": <0-100>} dicts. When available for a given
+    phrase, it REPLACES the deterministic match_percentage/suggested flag
+    (genuine LLM-judged relevance); phrases with no semantic score fall back
+    to the existing deterministic keyword-overlap logic unchanged.
     """
     jd_tokens = set(re.findall(r"[a-zA-Z]+", jd_text.lower()))
+    scores_lookup = _semantic_scores_lookup(semantic_scores)
 
     # NOTE (bug fix): uses the same stemming-aware _keyword_overlap_score()
     # as tailor_with_fallback()'s soft_skills_line selection, so the
@@ -1435,10 +2145,17 @@ def get_soft_skill_options_with_suggestions(jd_text: str) -> List[dict]:
 
     options = []
     for entry in SOFT_SKILL_BANK:
+        name_key = entry["phrase"].strip().lower()
+        if name_key in scores_lookup:
+            match_percentage = scores_lookup[name_key]
+            is_suggested = match_percentage >= 85
+        else:
+            match_percentage = _keyword_match_percentage(entry.get("keywords", []), jd_tokens)
+            is_suggested = entry["phrase"] in suggested_phrases
         options.append({
             "phrase": entry["phrase"],
-            "suggested": entry["phrase"] in suggested_phrases,
-            "match_percentage": _keyword_match_percentage(entry.get("keywords", []), jd_tokens),
+            "suggested": is_suggested,
+            "match_percentage": match_percentage,
         })
 
     options.sort(key=lambda o: (not o["suggested"], -o["match_percentage"]))
@@ -1446,7 +2163,10 @@ def get_soft_skill_options_with_suggestions(jd_text: str) -> List[dict]:
 
 
 
-def get_skill_options_with_suggestions(jd_text: str, pool: dict, previously_selected: Optional[dict] = None) -> List[dict]:
+def get_skill_options_with_suggestions(
+    jd_text: str, pool: dict, previously_selected: Optional[dict] = None,
+    semantic_scores: Optional[List[dict]] = None,
+) -> List[dict]:
     """
     Returns EVERY skill in the ground-truth skills_pool.json, grouped by
     category, each annotated with a "suggested" boolean flag and a
@@ -1463,11 +2183,21 @@ def get_skill_options_with_suggestions(jd_text: str, pool: dict, previously_sele
     in that run's output (this is the TRUE algorithm suggestion, more
     accurate than re-scoring from scratch); otherwise falls back to a
     simple keyword-overlap heuristic against the JD text.
+
+    semantic_scores (optional): the stored "skill_scores" list from a prior
+    LLM-based tailoring run's tailored_fields, a list of
+    {"name": <skill>, "score": <0-100>} dicts. When available for a given
+    skill, it REPLACES the deterministic match_percentage (genuine
+    LLM-judged relevance beats a keyword-overlap heuristic) and also
+    overrides "suggested" (score >= 50 counts as a suggestion), taking
+    priority over previously_selected. Skills with no semantic score fall
+    back to the existing deterministic logic unchanged.
     """
     jd_lower = jd_text.lower()
     jd_tokens = set(re.findall(r"[a-zA-Z+/#]+", jd_lower))
 
     previously_selected = previously_selected or {}
+    scores_lookup = _semantic_scores_lookup(semantic_scores)
 
     options = []
     for cat in pool.get("categories", []):
@@ -1475,14 +2205,19 @@ def get_skill_options_with_suggestions(jd_text: str, pool: dict, previously_sele
         prev_selected_set = {s.lower() for s in previously_selected.get(cat_name, [])}
         for skill in cat.get("skills", []):
             skill_lower = skill.lower()
-            skill_words = set(re.findall(r"[a-zA-Z+/#]+", skill_lower))
-            match_percentage = 100 if skill_lower in jd_lower else round(
-                (len(skill_words & jd_tokens) / max(len(skill_words), 1)) * 100
-            )
-            if prev_selected_set:
-                suggested = skill_lower in prev_selected_set
+            name_key = skill.strip().lower()
+            if name_key in scores_lookup:
+                match_percentage = scores_lookup[name_key]
+                suggested = match_percentage >= 85
             else:
-                suggested = skill_lower in jd_lower or bool(skill_words & jd_tokens)
+                skill_words = set(re.findall(r"[a-zA-Z+/#]+", skill_lower))
+                match_percentage = 100 if skill_lower in jd_lower else round(
+                    (len(skill_words & jd_tokens) / max(len(skill_words), 1)) * 100
+                )
+                if prev_selected_set:
+                    suggested = skill_lower in prev_selected_set
+                else:
+                    suggested = skill_lower in jd_lower or bool(skill_words & jd_tokens)
             options.append({
                 "category": cat_name,
                 "skill": skill,
@@ -1557,7 +2292,9 @@ def suggest_role_phrase(jd_text: str, top_domains: List[str], job_title: Optiona
     return top_domains[0] if top_domains else "Engineering"
 
 
-def get_domain_options_with_suggestions(jd_text: str, job_title: Optional[str] = None) -> dict:
+def get_domain_options_with_suggestions(
+    jd_text: str, job_title: Optional[str] = None, semantic_scores: Optional[List[dict]] = None
+) -> dict:
     """
     Returns EVERY entry in the authentic AUTHENTIC_SEEKING_DOMAINS bank, each
     annotated with a "suggested" boolean flag (would the deterministic
@@ -1569,19 +2306,34 @@ def get_domain_options_with_suggestions(jd_text: str, job_title: Optional[str] =
     Coursework/Soft-Skills pickers. Also returns a "suggested_role" string
     (the role phrase the deterministic algorithm would weave into
     seeking_line), which the UI pre-fills into an editable text box.
+
+    semantic_scores (optional): the stored "domain_scores" list from a prior
+    LLM-based tailoring run's tailored_fields, a list of
+    {"name": <domain>, "score": <0-100>} dicts. When available for a given
+    domain, it REPLACES the deterministic match_percentage/suggested flag
+    (genuine LLM-judged relevance); domains with no semantic score fall back
+    to the existing deterministic keyword-overlap logic unchanged.
     """
     jd_tokens = set(re.findall(r"[a-zA-Z]+", jd_text.lower()))
     domain_scores = _score_domains(jd_text)
     top_domains = [d for s, d in domain_scores if s > 0][:3]
     suggested_set = set(top_domains)
+    scores_lookup = _semantic_scores_lookup(semantic_scores)
 
     options = []
     for domain in AUTHENTIC_SEEKING_DOMAINS:
-        kws = DOMAIN_KEYWORD_MAP.get(domain, set())
+        name_key = domain.strip().lower()
+        if name_key in scores_lookup:
+            match_percentage = scores_lookup[name_key]
+            is_suggested = match_percentage >= 85
+        else:
+            kws = DOMAIN_KEYWORD_MAP.get(domain, set())
+            match_percentage = _keyword_match_percentage(list(kws), jd_tokens) if kws else 0
+            is_suggested = domain in suggested_set
         options.append({
             "domain": domain,
-            "suggested": domain in suggested_set,
-            "match_percentage": _keyword_match_percentage(list(kws), jd_tokens) if kws else 0,
+            "suggested": is_suggested,
+            "match_percentage": match_percentage,
         })
 
     options.sort(key=lambda o: (not o["suggested"], -o["match_percentage"]))

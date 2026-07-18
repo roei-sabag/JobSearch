@@ -41,8 +41,10 @@ class CVTailoredOut(BaseModel):
     id: int
     pdf_path: str
     created_at: datetime
+    mode: Optional[str] = None
 
     model_config = {"from_attributes": True}
+
 
 
 class JobOut(BaseModel):
@@ -57,6 +59,8 @@ class JobOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     tailored_versions: List[CVTailoredOut] = Field(default_factory=list)
+    rationale: List[str] = Field(default_factory=list)
+    mode: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -207,6 +211,8 @@ class FinalizeCoursesResponse(BaseModel):
     seeking_line: str = ""
     title_line: str = ""
     email_sent: bool = False
+    mode: Optional[str] = None
+
 
 
 
