@@ -1,7 +1,7 @@
 {
   "jd_snippet": "We are looking for a Hardware Verification Student Engineering to join our team.  Responsibilities include developing components of simulation-based testbenches, writing tests, debugging RTL code, and",
-  "soft_skills_line": "Strong Analytical Mindset, Effective Debugging Skills and Detail-Oriented Problem Solver",
-  "seeking_line": "Seeking a Hardware Verification Student position, with strong interest in Hardware Verification, Digital Design and Computer Architecture.",
+  "soft_skills_line": "Strong Analytical Thinking, Problem-Solving Mindset and Detail-Oriented",
+  "seeking_line": "Seeking a Hardware Verification Student position, with strong interest in Hardware Verification, RTL Design, Digital Design and Computer Architecture.",
   "categories": [
     {
       "name": "Hardware & Verification",
@@ -11,7 +11,8 @@
         "RTL Design",
         "Advanced Computer Architecture",
         "ModelSim",
-        "Vivado"
+        "Vivado",
+        "FPGA Synthesis"
       ]
     },
     {
@@ -38,6 +39,18 @@
       ]
     },
     {
+      "name": "Central Processing Unit Architecture",
+      "grade": 83,
+      "tags": [
+        "computer architecture",
+        "cpu",
+        "architecture",
+        "digital systems",
+        "hardware",
+        "processor"
+      ]
+    },
+    {
       "name": "Data Structures",
       "grade": 82,
       "tags": [
@@ -49,17 +62,6 @@
         "c",
         "c++",
         "coding"
-      ]
-    },
-    {
-      "name": "Introduction to Computational Methods",
-      "grade": 100,
-      "tags": [
-        "numerical methods",
-        "programming",
-        "simulation",
-        "matlab",
-        "computational"
       ]
     }
   ]
