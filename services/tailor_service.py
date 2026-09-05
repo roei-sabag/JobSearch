@@ -459,7 +459,7 @@ async def get_project_options_for_job(job_id: int, session: AsyncSession) -> lis
     if not projects_pool_path.exists():
         return []
 
-    pool = json.loads(projects_pool_path.read_text(encoding="utf-8"))
+    pool = json.loads(projects_pool_path.read_text(encoding="utf-8-sig"))
     all_projects = pool.get("projects", [])
 
     # By default, suggest the first project if no prior selection, or rely on what was previously tailored.
@@ -741,7 +741,7 @@ async def finalize_courses_for_job(
     if selected_projects is not None:
         projects_pool_path = WORKDIR / "data" / "projects_pool.json"
         if projects_pool_path.exists():
-            pool = json.loads(projects_pool_path.read_text(encoding="utf-8"))
+            pool = json.loads(projects_pool_path.read_text(encoding="utf-8-sig"))
             all_projects = pool.get("projects", [])
             valid_projects = [p for p in all_projects if p["title"] in selected_projects]
             final_selected_projects = valid_projects

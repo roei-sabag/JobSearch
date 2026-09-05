@@ -2502,7 +2502,7 @@ def render_pdf(
     if selected_projects is None:
         projects_pool_path = WORKDIR / "data" / "projects_pool.json"
         if projects_pool_path.exists():
-            pool = json.loads(projects_pool_path.read_text(encoding="utf-8"))
+            pool = json.loads(projects_pool_path.read_text(encoding="utf-8-sig"))
             selected_projects = pool.get("projects", [])
         else:
             selected_projects = []
