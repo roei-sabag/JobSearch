@@ -463,9 +463,8 @@ async def get_project_options_for_job(job_id: int, session: AsyncSession) -> lis
     all_projects = pool.get("projects", [])
 
     # By default, suggest the first project if no prior selection, or rely on what was previously tailored.
-    latest = await _get_latest_tailoring_for_job(job_id, session)
-    if latest and latest.tailored_fields_json:
-        previous_fields = json.loads(latest.tailored_fields_json)
+    previous_fields = await _get_latest_tailored_fields(job_id, session)
+    if previous_fields:
         previously_selected = previous_fields.get("selected_projects", [])
         if previously_selected:
             prev_titles = {p["title"] for p in previously_selected}
