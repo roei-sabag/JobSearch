@@ -842,21 +842,24 @@ async function pollJobStatus(jobId, attempt) {
 
 async function loadCourseOptions(jobId) {
   try {
-    const [coursesRes, softSkillsRes, domainsRes, skillsRes] = await Promise.all([
+    const [coursesRes, softSkillsRes, domainsRes, skillsRes, projectsRes] = await Promise.all([
       fetch(`/api/jobs/${jobId}/course-options`),
       fetch(`/api/jobs/${jobId}/soft-skill-options`),
       fetch(`/api/jobs/${jobId}/domain-options`),
       fetch(`/api/jobs/${jobId}/skill-options`),
+      fetch(`/api/jobs/${jobId}/project-options`),
     ]);
     if (!coursesRes.ok) throw new Error('Failed to fetch course options');
     if (!softSkillsRes.ok) throw new Error('Failed to fetch soft skill options');
     if (!domainsRes.ok) throw new Error('Failed to fetch domain options');
     if (!skillsRes.ok) throw new Error('Failed to fetch skill options');
+    if (!projectsRes.ok) throw new Error('Failed to fetch project options');
 
     const coursesData = await coursesRes.json();
     const softSkillsData = await softSkillsRes.json();
     const domainsData = await domainsRes.json();
     const skillsData = await skillsRes.json();
+    const projectsData = await projectsRes.json();
 
     renderCourseList(coursesData.options);
     renderSoftSkillList(softSkillsData.options);
