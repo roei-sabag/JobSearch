@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Job Tailoring — One-Click Ingest</title>
+<title>Resume Tailoring Pipeline</title>
 <style>
   :root {
     --bg: #0f1220;
@@ -265,6 +265,15 @@
     border-radius: 10px;
     padding: 12px 16px;
     font-size: 1rem;
+      <div class="projects-panel" style="margin-top:20px;">
+        <h3>📁 Projects</h3>
+        <div class="hint">
+          Pick which projects should appear in the CV's Projects section.
+          The previously-tailored selection (or default) is pre-checked.
+        </div>
+        <div id="projectList"></div>
+      </div>
+
     font-weight: 600;
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
   }
@@ -379,7 +388,7 @@
 </head>
 <body>
   <div class="container">
-    <h1>🎯 Paste &amp; Tailor</h1>
+    <h1>🎯 Resume Tailoring Pipeline</h1>
     <div class="subtitle">
       Paste Raw Job Description Here (WhatsApp, LinkedIn, etc.) — no formatting needed.
     </div>
@@ -853,6 +862,7 @@ async function loadCourseOptions(jobId) {
     renderSoftSkillList(softSkillsData.options);
     renderDomainList(domainsData.options);
     renderSkillList(skillsData.options);
+    renderProjectList(projectsData.options);
     rolePhraseInputEl.value = domainsData.suggested_role || '';
     coursesPanel.classList.add('visible');
 
@@ -900,6 +910,29 @@ function renderCourseList(options) {
     courseListEl.appendChild(item);
   });
 }
+
+function renderProjectList(options) {
+  const projectListEl = document.getElementById('projectList');
+  if (!projectListEl) return;
+  projectListEl.innerHTML = '';
+  options.forEach((proj, idx) => {
+    const item = document.createElement('div');
+    item.className = 'course-item' + (proj.suggested ? ' suggested' : '');
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.id = `project-${idx}`;
+    checkbox.value = proj.title;
+    checkbox.checked = proj.suggested;
+    const label = document.createElement('label');
+    label.setAttribute('for', checkbox.id);
+    label.innerHTML = `<b>${proj.title}</b>`;
+
+    item.appendChild(checkbox);
+    item.appendChild(label);
+    projectListEl.appendChild(item);
+  });
+}
+
 
 function renderSoftSkillList(options) {
   softSkillListEl.innerHTML = '';
@@ -980,6 +1013,10 @@ finalizeCoursesBtn.addEventListener('click', async () => {
   const checkedSoftSkills = Array.from(softSkillListEl.querySelectorAll('input[type="checkbox"]:checked'))
     .map(cb => cb.value);
   const checkedDomains = Array.from(domainListEl.querySelectorAll('input[type="checkbox"]:checked'))
+  const projectListEl = document.getElementById('projectList');
+  const checkedProjects = projectListEl ? Array.from(projectListEl.querySelectorAll('input[type="checkbox"]:checked'))
+    .map(cb => cb.value) : undefined;
+
     .map(cb => cb.value);
   const checkedSkills = Array.from(skillListEl.querySelectorAll('input[type="checkbox"]:checked'))
     .map(cb => cb.value);
@@ -1004,6 +1041,7 @@ finalizeCoursesBtn.addEventListener('click', async () => {
         semesters_remaining: semestersRemaining,
         include_student_in_title: includeStudentInTitle,
         selected_skills: checkedSkills,
+        selected_projects: checkedProjects,
       }),
     });
 

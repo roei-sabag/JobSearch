@@ -1,7 +1,7 @@
 """
 run_app.py
 -----------
-One-click launcher for the Autonomous Resume System.
+One-click launcher for the Resume Tailoring Pipeline.
 
 Starts the FastAPI/Uvicorn server and automatically opens the default
 web browser to the running application, so the user never has to
@@ -62,7 +62,7 @@ def open_browser():
 
 def main():
     print("=" * 60)
-    print("  Launching Autonomous Resume System...")
+    print("  Launching Resume Tailoring Pipeline...")
     print(f"  Server listening on: {HOST}:{PORT} (all network interfaces)")
     print(f"  Local browser will open at: {URL}")
     print("  Reachable from other Tailscale devices (e.g. your phone) at:")

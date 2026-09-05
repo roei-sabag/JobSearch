@@ -30,6 +30,8 @@ from api.schemas import (
     SkillOptionsResponse,
     SoftSkillOptionsResponse,
     TailorJobResponse,
+    ProjectOptionsResponse,
+
 )
 from db.base import AsyncSessionLocal
 from db.models import Company, CVTailored, Job, compute_content_hash
@@ -40,6 +42,7 @@ from services.tailor_service import (
     get_domain_options_for_job,
     get_skill_options_for_job,
     get_soft_skill_options_for_job,
+    get_project_options_for_job,
     tailor_cv_for_job,
 )
 
@@ -457,6 +460,19 @@ async def get_job_skill_options(job_id: int, session: AsyncSession = Depends(get
         raise HTTPException(status_code=404, detail=str(e))
 
     return SkillOptionsResponse(job_id=job_id, options=options)
+@router.get("/{job_id}/project-options", response_model=ProjectOptionsResponse)
+async def get_job_project_options(job_id: int, session: AsyncSession = Depends(get_session)):
+    """
+    Returns every project in the ground-truth projects_pool.json.
+    """
+    try:
+        options = await get_project_options_for_job(job_id, session)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    return ProjectOptionsResponse(job_id=job_id, options=options)
+
+
 
 
 @router.post("/{job_id}/finalize-courses", response_model=FinalizeCoursesResponse)
@@ -490,6 +506,7 @@ async def finalize_job_courses(
             semesters_remaining=payload.semesters_remaining,
             include_student_in_title=payload.include_student_in_title,
             selected_skills=payload.selected_skills,
+            selected_projects=payload.selected_projects,
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -503,6 +520,8 @@ async def finalize_job_courses(
 
     return FinalizeCoursesResponse(
         job_id=job_id,
+        selected_projects=tailored_fields.get("selected_projects", []),
+
         cv_tailored_id=cv_tailored.id,
         pdf_path=cv_tailored.pdf_path,
         relevant_courses=[

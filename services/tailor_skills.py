@@ -2460,6 +2460,7 @@ def render_pdf(
     rendered_html_path: Optional[Path] = None,
     template_path: Optional[Path] = None,
     title_line: Optional[str] = None,
+    selected_projects: Optional[list[dict]] = None,
 ):
 
     """
@@ -2498,6 +2499,15 @@ def render_pdf(
     # HTML is fully self-contained and never depends on relative-path
     # resolution at render time.
     css_path = template_dir / "cv_style.css"
+    if selected_projects is None:
+        projects_pool_path = WORKDIR / "data" / "projects_pool.json"
+        if projects_pool_path.exists():
+            pool = json.loads(projects_pool_path.read_text(encoding="utf-8"))
+            selected_projects = pool.get("projects", [])
+        else:
+            selected_projects = []
+
+
     inline_css = css_path.read_text(encoding="utf-8") if css_path.exists() else ""
 
     html_out = template.render(
@@ -2507,6 +2517,7 @@ def render_pdf(
         relevant_courses=relevant_courses,
         inline_css=inline_css,
         title_line=title_line or build_title_line(),
+        selected_projects=selected_projects,
     )
 
 

@@ -1,0 +1,20 @@
+﻿{
+  "projects": [
+    {
+      "title": "SimpleRisC - CPU RTL Design and Verification (Personal Project)",
+      "bullets": [
+        "Designed and verified ALU, Control Unit, Register File, and Memory modules with comprehensive testbenches in ModelSim using SystemVerilog.",
+        "Performed synthesis and implementation in Vivado.",
+        "GitHub: github.com/matan-roei-labs"
+      ]
+    },
+    {
+      "title": "Resume Tailoring Pipeline – Asynchronous Automation Tool | Python",
+      "bullets": [
+        "Architected an asynchronous Python pipeline orchestrating parallel LLM APIs (Claude, GPT-4o) with an automated arbitration stage.",
+        "Enforced strict schema validation and whitelist matching against local JSON datasets, ensuring 100% deterministic output compliance.",
+        "Implemented regex parsing and a local keyword frequency-ranking fallback to guarantee execution during network or API timeouts."
+      ]
+    }
+  ]
+}

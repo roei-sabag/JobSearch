@@ -447,6 +447,47 @@ async def get_domain_options_for_job(job_id: int, session: AsyncSession) -> dict
     return ts.get_domain_options_with_suggestions(job.raw_description, job_title=job.title, semantic_scores=semantic_scores)
 
 
+async def get_project_options_for_job(job_id: int, session: AsyncSession) -> list[dict]:
+    """
+    Returns every project from the ground-truth projects_pool.json.
+    """
+    job = await session.get(Job, job_id)
+    if not job:
+        raise ValueError("Job not found.")
+
+    projects_pool_path = WORKDIR / "data" / "projects_pool.json"
+    if not projects_pool_path.exists():
+        return []
+
+    pool = json.loads(projects_pool_path.read_text(encoding="utf-8"))
+    all_projects = pool.get("projects", [])
+
+    # By default, suggest the first project if no prior selection, or rely on what was previously tailored.
+    latest = await _get_latest_tailoring_for_job(job_id, session)
+    if latest and latest.tailored_fields_json:
+        previous_fields = json.loads(latest.tailored_fields_json)
+        previously_selected = previous_fields.get("selected_projects", [])
+        if previously_selected:
+            prev_titles = {p["title"] for p in previously_selected}
+            options = []
+            for p in all_projects:
+                options.append({
+                    "title": p["title"],
+                    "bullets": p["bullets"],
+                    "suggested": p["title"] in prev_titles
+                })
+            return options
+
+    # Default fallback: suggest all or just the first. Let's suggest all by default so it's visible.
+    return [
+        {
+            "title": p["title"],
+            "bullets": p["bullets"],
+            "suggested": True
+        }
+        for p in all_projects
+    ]
+
 async def get_skill_options_for_job(job_id: int, session: AsyncSession) -> list[dict]:
     """
     Returns every skill in the ground-truth skills_pool.json, grouped by
@@ -492,6 +533,7 @@ async def finalize_courses_for_job(
     semesters_remaining: int | None = None,
     include_student_in_title: bool | None = None,
     selected_skills: list[str] | None = None,
+    selected_projects: list[str] | None = None,
 ) -> tuple[CVTailored, bool]:
 
 
@@ -695,6 +737,16 @@ async def finalize_courses_for_job(
             categories_for_response = candidate_categories
             mode_suffix += " + skills manually finalized by user"
 
+    final_selected_projects = previous_fields.get("selected_projects", [])
+    if selected_projects is not None:
+        projects_pool_path = WORKDIR / "data" / "projects_pool.json"
+        if projects_pool_path.exists():
+            pool = json.loads(projects_pool_path.read_text(encoding="utf-8"))
+            all_projects = pool.get("projects", [])
+            valid_projects = [p for p in all_projects if p["title"] in selected_projects]
+            final_selected_projects = valid_projects
+
+
     # Reconstruct the TailoredSkillsResponse from the previous run's stored
     # fields so render_pdf() gets its expected object shape, without calling
     # the LLM again (hard skills are intentionally left unchanged unless the
@@ -721,6 +773,7 @@ async def finalize_courses_for_job(
         "relevant_courses": selected_courses,
         "course_authenticity_violations": course_violations,
         "skill_authenticity_violations": skill_violations,
+        "selected_projects": final_selected_projects,
     }
 
 
@@ -754,6 +807,7 @@ async def finalize_courses_for_job(
         rendered_html_path=rendered_html_path,
         template_path=ts.TEMPLATE_PATH,
         title_line=title_line,
+        selected_projects=final_selected_projects,
     )
 
 

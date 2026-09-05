@@ -116,6 +116,16 @@ class SoftSkillOptionsResponse(BaseModel):
     job_id: int
     options: List[SoftSkillOption]
 
+class ProjectOption(BaseModel):
+    title: str
+    bullets: List[str]
+    suggested: bool
+
+class ProjectOptionsResponse(BaseModel):
+    job_id: int
+    options: List[ProjectOption]
+
+
 
 class DomainOption(BaseModel):
     domain: str
@@ -200,12 +210,22 @@ class FinalizeCoursesRequest(BaseModel):
             "selection is left unchanged."
         ),
     )
+    selected_projects: Optional[List[str]] = Field(
+        None,
+        description=(
+            "Exact project titles (from ProjectOption.title) the user has chosen to include in the CV's "
+            "Projects section. If None, the previously-tailored project selection is left unchanged."
+        ),
+    )
+
 
 
 class FinalizeCoursesResponse(BaseModel):
     job_id: int
     cv_tailored_id: int
     pdf_path: str
+    selected_projects: List[ProjectOption] = Field(default_factory=list)
+
     relevant_courses: List[CourseOption]
     soft_skills_line: str = ""
     seeking_line: str = ""

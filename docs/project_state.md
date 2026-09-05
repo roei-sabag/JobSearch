@@ -9,7 +9,7 @@
 
 ## 1. Project Core Objective
 
-**Autonomous AI-Driven Job Search & Resume Tailoring System** for Roei Sabag, a 4th-year
+**Resume Tailoring Pipeline - Asynchronous Automation Tool** for Roei Sabag, a 4th-year
 B.Sc. Electrical & Computer Engineering student at Ben-Gurion University of the Negev
 (Communications & Computer Systems track), targeting **student/internship positions** in:
 - Hardware Verification
