@@ -1075,12 +1075,16 @@ finalizeCoursesBtn.addEventListener('click', async () => {
 
 
 submitBtn.addEventListener('click', async () => {
-
-  const rawText = rawTextEl.value.trim();
+  let rawText = rawTextEl.value.trim();
   if (!rawText) {
     alert('Please paste a job description first.');
     return;
   }
+
+  // Sanitize input to prevent JSON decoding errors from mobile keyboards (smart quotes, weird control chars)
+  rawText = rawText.replace(/[\u2018\u2019]/g, "'")
+                   .replace(/[\u201C\u201D]/g, '"')
+                   .replace(/[\u0000-\u001F\u007F-\u009F]/g, " ");
 
   submitBtn.disabled = true;
   clearLog();
@@ -1094,8 +1098,18 @@ submitBtn.addEventListener('click', async () => {
     });
 
     if (!res.ok) {
-      const errBody = await res.json().catch(() => ({}));
-      throw new Error(errBody.detail || `HTTP ${res.status}`);
+      let errorMsg = `HTTP ${res.status}`;
+      try {
+        const errBody = await res.json();
+        // If it's a validation error (422), format it nicely
+        if (res.status === 422 && Array.isArray(errBody.detail)) {
+            errorMsg = "Invalid Input: " + errBody.detail.map(e => e.msg).join(", ");
+        } else {
+            errorMsg = errBody.detail || errorMsg;
+        }
+      } catch (e) { /* ignore JSON parse error on fallback */ }
+      
+      throw new Error(errorMsg);
     }
 
     const data = await res.json();
@@ -1109,7 +1123,7 @@ submitBtn.addEventListener('click', async () => {
 
     pollJobStatus(data.job_id);
   } catch (err) {
-    logLine('Error: ' + err.message, 'err');
+    logLine('Error submitting job: ' + err.message, 'err');
     submitBtn.disabled = false;
   }
 });
