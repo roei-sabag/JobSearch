@@ -99,6 +99,9 @@ class CourseOption(BaseModel):
     tags: List[str] = Field(default_factory=list)
     suggested: bool
     match_percentage: int = 0
+    claude_score: Optional[int] = None
+    gpt_score: Optional[int] = None
+    gemini_score: Optional[int] = None
 
 
 class CourseOptionsResponse(BaseModel):
@@ -119,7 +122,11 @@ class SoftSkillOptionsResponse(BaseModel):
 class ProjectOption(BaseModel):
     title: str
     bullets: List[str]
-    suggested: bool
+    suggested: bool = True
+    match_percentage: int = 0
+    claude_score: Optional[int] = None
+    gpt_score: Optional[int] = None
+    gemini_score: Optional[int] = None
 
 class ProjectOptionsResponse(BaseModel):
     job_id: int
@@ -131,6 +138,9 @@ class DomainOption(BaseModel):
     domain: str
     suggested: bool
     match_percentage: int = 0
+    claude_score: Optional[int] = None
+    gpt_score: Optional[int] = None
+    gemini_score: Optional[int] = None
 
 
 class DomainOptionsResponse(BaseModel):

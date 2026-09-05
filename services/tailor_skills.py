@@ -63,6 +63,7 @@ WORKDIR = Path(__file__).resolve().parent.parent
 JD_PATH = WORKDIR / "sample_jd.txt"
 SKILLS_POOL_PATH = WORKDIR / "data" / "skills_pool.json"
 COURSES_POOL_PATH = WORKDIR / "data" / "courses_pool.json"
+PROJECTS_POOL_PATH = WORKDIR / "data" / "projects_pool.json"
 AUTHENTICITY_POOL_PATH = WORKDIR / "data" / "authenticity_pool.json"
 TEMPLATE_PATH = WORKDIR / "templates" / "cv_template.html"
 OUTPUT_PDF_PATH = WORKDIR / "output" / "tailored_cv.pdf"
@@ -578,6 +579,10 @@ class TailoredSkillsResponse(BaseModel):
         default_factory=list,
         description="0-100 relevance score for EVERY course in the ground-truth courses_pool.json (name must exactly match the course's 'name' string).",
     )
+    project_scores: List[RelevanceScore] = Field(
+        default_factory=list,
+        description="0-100 relevance score for EVERY project in the ground-truth projects_pool.json (name must exactly match the project's 'title' string).",
+    )
 
     @field_validator("soft_skills_line")
     @classmethod
@@ -742,6 +747,40 @@ def load_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def load_projects_pool() -> List[dict]:
+    """
+    Loads the ground-truth projects list from PROJECTS_POOL_PATH. Uses
+    utf-8-sig to gracefully tolerate a UTF-8 BOM (e.g. from a file authored/
+    saved on Windows via PowerShell) - see the BOM crash bug fixed
+    previously. Returns [] if the file doesn't exist yet.
+    """
+    if not PROJECTS_POOL_PATH.exists():
+        return []
+    pool = json.loads(PROJECTS_POOL_PATH.read_text(encoding="utf-8-sig"))
+    return pool.get("projects", [])
+
+
+def _score_project_against_jd(project: dict, jd_tokens: set) -> int:
+    """
+    Deterministic (no-LLM) relevance score for a single project against the
+    JD's token set: counts how many distinct significant words from the
+    project's own title + bullets appear in the JD text, as a percentage of
+    the project's own total distinct words. Mirrors the keyword-overlap
+    style already used for domains/courses/soft-skills, so the local
+    fallback ranker produces a genuine (if simpler) project_scores array
+    instead of leaving it empty when no LLM is available.
+    """
+    text = project.get("title", "") + " " + " ".join(project.get("bullets", []))
+    words = set(re.findall(r"[a-zA-Z+/#]+", text.lower()))
+    # Drop very short/common words that would create noisy false-positive matches.
+    words = {w for w in words if len(w) > 2}
+    if not words:
+        return 0
+    jd_tokens_lower = {t.lower() for t in jd_tokens}
+    matched = len(words & jd_tokens_lower)
+    return round((matched / len(words)) * 100)
+
+
 # --------------------------------------------------------------------------- #
 # Lightweight morphological stemming (root-cause fix for exact-token-match
 # keyword scoring silently missing genuine matches like "motivation" vs.
@@ -901,6 +940,7 @@ def tailor_with_anthropic(jd_text: str, pool: dict, courses_pool: Optional[dict]
         c["name"] for c in courses_pool.get("courses", [])
         if c.get("grade") is not None and MIN_COURSE_GRADE <= c["grade"] <= MAX_COURSE_GRADE
     ]
+    project_titles = [p["title"] for p in load_projects_pool()]
 
 
     system_prompt = f"""You are an expert technical resume editor. You must select, prioritize, and
@@ -987,7 +1027,7 @@ Also produce:
   left out, with a short reason each.
 
 === SEMANTIC RELEVANCE SCORES ===
-In ADDITION to the above, you must ALSO produce four relevance-score arrays,
+In ADDITION to the above, you must ALSO produce five relevance-score arrays,
 each providing a 0-100 relevance score (100 = extremely relevant to this
 specific JD, 0 = completely irrelevant) for EVERY SINGLE item in the
 respective ground-truth bank below (not just the ones you selected above -
@@ -1007,6 +1047,12 @@ grant permission to fabricate/include anything not otherwise allowed.
     Score how semantically relevant each course's subject matter is to this
     JD. Which courses actually appear on the CV is still decided
     deterministically elsewhere - this score is purely additive metadata.
+  - "project_scores": one {{"name": <project title>, "score": <0-100>}} entry
+    for EVERY project in this list of the candidate's real personal projects
+    (name must exactly match the string given here): {project_titles}
+    Score how semantically relevant each project is to this JD. Which
+    project(s) actually appear on the CV is decided by the user in the UI -
+    this score is purely additive metadata to help that decision.
 
 
 HARD LAYOUT CONSTRAINTS (to preserve a fixed-layout PDF template):
@@ -1032,7 +1078,8 @@ Respond ONLY with a single valid JSON object matching this exact schema (no mark
   "skill_scores": [{{"name": "<skill>", "score": <0-100>}}, "..."],
   "soft_skill_scores": [{{"name": "<phrase>", "score": <0-100>}}, "..."],
   "domain_scores": [{{"name": "<domain>", "score": <0-100>}}, "..."],
-  "course_scores": [{{"name": "<course name>", "score": <0-100>}}, "..."]
+  "course_scores": [{{"name": "<course name>", "score": <0-100>}}, "..."],
+  "project_scores": [{{"name": "<project title>", "score": <0-100>}}, "..."]
 }}
 
 Ground-truth skills pool (the ONLY allowed hard skills):
@@ -1214,10 +1261,11 @@ def _tailored_skills_json_schema(for_gemini: bool = False) -> dict:
             "soft_skill_scores": {"type": "array", "items": relevance_score_item},
             "domain_scores": {"type": "array", "items": relevance_score_item},
             "course_scores": {"type": "array", "items": relevance_score_item},
+            "project_scores": {"type": "array", "items": relevance_score_item},
         },
         "required": [
             "categories", "soft_skills_line", "seeking_line", "rationale", "omitted",
-            "skill_scores", "soft_skill_scores", "domain_scores", "course_scores",
+            "skill_scores", "soft_skill_scores", "domain_scores", "course_scores", "project_scores",
         ],
         "additionalProperties": False,
     }
@@ -1266,6 +1314,7 @@ def _build_tailoring_prompts(jd_text: str, pool: dict, courses_pool: Optional[di
         c["name"] for c in courses_pool.get("courses", [])
         if c.get("grade") is not None and MIN_COURSE_GRADE <= c["grade"] <= MAX_COURSE_GRADE
     ]
+    project_titles = [p["title"] for p in load_projects_pool()]
     system_prompt = f"""You are an expert technical resume editor. You must select, prioritize, and
 categorize skills for a candidate's CV "Skills" section, based STRICTLY on a
 ground-truth inventory of the candidate's real skills. You are NEVER allowed
@@ -1292,7 +1341,7 @@ Also produce "rationale" (bullet points mapping choices to JD phrases) and
 "omitted" (skills deliberately left out, with reasons).
 
 === SEMANTIC RELEVANCE SCORES ===
-Also produce four relevance-score arrays, each a 0-100 relevance score
+Also produce five relevance-score arrays, each a 0-100 relevance score
 (100 = extremely relevant to this JD, 0 = irrelevant) for EVERY SINGLE item
 in the respective ground-truth bank (not just the ones you selected above -
 every item must get a score):
@@ -1305,6 +1354,9 @@ every item must get a score):
   - "course_scores": one {{"name": <course name>, "score": <0-100>}} entry
     for EVERY course in this list: {eligible_course_names}
     Score how semantically relevant each course's subject matter is to this JD.
+  - "project_scores": one {{"name": <project title>, "score": <0-100>}} entry
+    for EVERY project in this list: {project_titles}
+    Score how semantically relevant each project is to this JD.
 
 HARD LAYOUT CONSTRAINTS:
 - AT MOST {MAX_CATEGORIES} skill categories, AT MOST {MAX_SKILLS_PER_CATEGORY} skills each.
@@ -1321,7 +1373,8 @@ Respond ONLY with a single valid JSON object matching this exact schema (no mark
   "skill_scores": [{{"name": "<skill>", "score": <0-100>}}, "..."],
   "soft_skill_scores": [{{"name": "<phrase>", "score": <0-100>}}, "..."],
   "domain_scores": [{{"name": "<domain>", "score": <0-100>}}, "..."],
-  "course_scores": [{{"name": "<course name>", "score": <0-100>}}, "..."]
+  "course_scores": [{{"name": "<course name>", "score": <0-100>}}, "..."],
+  "project_scores": [{{"name": "<project title>", "score": <0-100>}}, "..."]
 }}
 
 Ground-truth skills pool (the ONLY allowed hard skills):
@@ -1449,6 +1502,7 @@ def _candidate_to_dict(response: TailoredSkillsResponse) -> dict:
         "soft_skill_scores": [s.model_dump() for s in response.soft_skill_scores],
         "domain_scores": [s.model_dump() for s in response.domain_scores],
         "course_scores": [s.model_dump() for s in response.course_scores],
+        "project_scores": [s.model_dump() for s in response.project_scores],
     }
 
 
@@ -1472,12 +1526,12 @@ def _reconcile_with_gemini(jd_text: str, pool: dict, candidate_a: dict, candidat
     before being trusted by the caller - no new trust is granted to the
     arbiter's output vs. any other model's.
 
-    The arbiter is ALSO instructed to reconcile the 4 relevance-score arrays
-    (skill_scores, soft_skill_scores, domain_scores, course_scores) from
-    both candidates, e.g. by averaging or picking whichever candidate's
-    score for a given item seems best justified - these scores are purely
-    additive metadata and are never subject to the zero-fabrication
-    constraint (a score is not a "skill claim").
+    The arbiter is ALSO instructed to reconcile the 5 relevance-score arrays
+    (skill_scores, soft_skill_scores, domain_scores, course_scores,
+    project_scores) from both candidates, e.g. by averaging or picking
+    whichever candidate's score for a given item seems best justified -
+    these scores are purely additive metadata and are never subject to the
+    zero-fabrication constraint (a score is not a "skill claim").
     """
     import google.generativeai as genai
 
@@ -1502,15 +1556,14 @@ appear in at least one candidate's version - never invent a new phrase/domain
 that appears in neither. seeking_line domains must come only from this
 authentic bank: {AUTHENTIC_SEEKING_DOMAINS}
 
-Also reconcile the 4 relevance-score arrays (skill_scores, soft_skill_scores,
-domain_scores, course_scores) from both candidates - for each named item,
-use your judgment to produce a single best 0-100 score (e.g. average the two
-candidates' scores, or pick whichever seems best justified by the JD). These
-scores are purely descriptive metadata, not subject to the zero-fabrication
-rule above - you may score EVERY item in the ground-truth pool/banks even if
-neither candidate scored it, as long as every item from the pool ultimately
-gets a score in your output. Return an empty list [] for course_scores
-(courses are scored deterministically elsewhere, not by you).
+Also reconcile the 5 relevance-score arrays (skill_scores, soft_skill_scores,
+domain_scores, course_scores, project_scores) from both candidates - for
+each named item, use your judgment to produce a single best 0-100 score
+(e.g. average the two candidates' scores, or pick whichever seems best
+justified by the JD). These scores are purely descriptive metadata, not
+subject to the zero-fabrication rule above - you may score EVERY item in
+the ground-truth pool/banks even if neither candidate scored it, as long as
+every item from the pool ultimately gets a score in your output.
 
 Respond ONLY with a single JSON object matching this exact schema:
 {{
@@ -1522,7 +1575,8 @@ Respond ONLY with a single JSON object matching this exact schema:
   "skill_scores": [{{"name": "<skill>", "score": <0-100>}}, "..."],
   "soft_skill_scores": [{{"name": "<phrase>", "score": <0-100>}}, "..."],
   "domain_scores": [{{"name": "<domain>", "score": <0-100>}}, "..."],
-  "course_scores": []
+  "course_scores": [{{"name": "<course name>", "score": <0-100>}}, "..."],
+  "project_scores": [{{"name": "<project title>", "score": <0-100>}}, "..."]
 }}
 
 Layout constraints (must still be respected): at most {MAX_CATEGORIES} categories,
@@ -1567,15 +1621,48 @@ Produce the single reconciled JSON object now."""
     return TailoredSkillsResponse(**data)
 
 
-def tailor_with_multi_agent_consensus(jd_text: str, pool: dict, courses_pool: Optional[dict] = None) -> Tuple[TailoredSkillsResponse, str]:
+def _extract_agent_scores(candidate_a: dict, candidate_b: dict, final_response: TailoredSkillsResponse) -> dict:
+    """
+    Builds the "agent_scores" audit structure persisted alongside a
+    tailoring run's result, capturing Claude's, GPT-4o's, and the final
+    (Gemini-reconciled, or tiebreak-chosen) raw relevance-score arrays for
+    each of the three scoreable categories (courses/domains/projects), so
+    the UI can display all three models' individual judgments side-by-side
+    instead of only the single final score.
+    """
+    return {
+        "courses": {
+            "claude": candidate_a.get("course_scores", []),
+            "gpt": candidate_b.get("course_scores", []),
+            "gemini": [s.model_dump() for s in final_response.course_scores],
+        },
+        "domains": {
+            "claude": candidate_a.get("domain_scores", []),
+            "gpt": candidate_b.get("domain_scores", []),
+            "gemini": [s.model_dump() for s in final_response.domain_scores],
+        },
+        "projects": {
+            "claude": candidate_a.get("project_scores", []),
+            "gpt": candidate_b.get("project_scores", []),
+            "gemini": [s.model_dump() for s in final_response.project_scores],
+        },
+    }
+
+
+def tailor_with_multi_agent_consensus(jd_text: str, pool: dict, courses_pool: Optional[dict] = None) -> Tuple[TailoredSkillsResponse, str, dict]:
 
     """
     Full ensemble orchestrator: runs Claude + GPT-4o in parallel, then Gemini
     as an arbiter over both, following the exact fallback hierarchy below.
-    Returns (response, mode) where `mode` transparently records which agents
-    actually contributed to the final result - mirrors the existing
-    `mode` string pattern already used throughout this module/tailor_service.py,
-    so every CVTailored row's audit trail stays equally inspectable.
+    Returns (response, mode, agent_scores) where `mode` transparently
+    records which agents actually contributed to the final result - mirrors
+    the existing `mode` string pattern already used throughout this
+    module/tailor_service.py, so every CVTailored row's audit trail stays
+    equally inspectable. `agent_scores` is a dict of
+    {"courses"/"domains"/"projects": {"claude": [...], "gpt": [...],
+    "gemini": [...]}} - the RAW per-agent relevance-score arrays (never
+    just the final merged score), populated with whichever agents actually
+    ran (missing/failed agents contribute an empty list for their slot).
 
     Fallback hierarchy (never fails silently, never hangs indefinitely):
       A ok, B ok, Arbiter ok      -> arbiter's reconciled output
@@ -1596,16 +1683,34 @@ def tailor_with_multi_agent_consensus(jd_text: str, pool: dict, courses_pool: Op
     a_ok = a_result["response"] is not None
     b_ok = b_result["response"] is not None
 
+    def _single_agent_scores(response: TailoredSkillsResponse, key: str) -> dict:
+        """Builds the agent_scores structure for the single-agent-only branches."""
+        cat_to_field = {"courses": "course_scores", "domains": "domain_scores", "projects": "project_scores"}
+        result = {}
+        for cat, field in cat_to_field.items():
+            values = [s.model_dump() for s in getattr(response, field)]
+            result[cat] = {"claude": [], "gpt": [], "gemini": []}
+            result[cat][key] = values
+        return result
+
     if not a_ok and not b_ok:
         raise RuntimeError(
             f"Both agents failed: anthropic={a_result['error']!r}, openai={b_result['error']!r}"
         )
 
     if a_ok and not b_ok:
-        return a_result["response"], f"single-agent(anthropic-only, openai-failed: {b_result['error']})"
+        return (
+            a_result["response"],
+            f"single-agent(anthropic-only, openai-failed: {b_result['error']})",
+            _single_agent_scores(a_result["response"], "claude"),
+        )
 
     if b_ok and not a_ok:
-        return b_result["response"], f"single-agent(openai-only, anthropic-failed: {a_result['error']})"
+        return (
+            b_result["response"],
+            f"single-agent(openai-only, anthropic-failed: {a_result['error']})",
+            _single_agent_scores(b_result["response"], "gpt"),
+        )
 
     # Both A and B succeeded - attempt Gemini arbitration (ONE attempt, no loop).
     candidate_a = _candidate_to_dict(a_result["response"])
@@ -1613,14 +1718,22 @@ def tailor_with_multi_agent_consensus(jd_text: str, pool: dict, courses_pool: Op
 
     gemini_key = os.getenv("GOOGLE_API_KEY")
     if not gemini_key:
-        return _tiebreak(a_result["response"], b_result["response"], allowed_skills_flat), \
-            "dual-agent(anthropic+openai, arbiter-skipped: no GOOGLE_API_KEY)"
+        tiebroken = _tiebreak(a_result["response"], b_result["response"], allowed_skills_flat)
+        return (
+            tiebroken,
+            "dual-agent(anthropic+openai, arbiter-skipped: no GOOGLE_API_KEY)",
+            _extract_agent_scores(candidate_a, candidate_b, tiebroken),
+        )
 
     try:
         arbiter_response = _run_with_timeout(
             _reconcile_with_gemini, ARBITER_CALL_TIMEOUT_SECONDS, jd_text, pool, candidate_a, candidate_b
         )
-        return arbiter_response, "multi-agent-consensus(anthropic+openai+gemini-arbiter)"
+        return (
+            arbiter_response,
+            "multi-agent-consensus(anthropic+openai+gemini-arbiter)",
+            _extract_agent_scores(candidate_a, candidate_b, arbiter_response),
+        )
     except Exception as e:
         # Any arbiter failure (timeout, API error, or Pydantic validation
         # error on its output) falls straight back to the deterministic
@@ -1629,8 +1742,12 @@ def tailor_with_multi_agent_consensus(jd_text: str, pool: dict, courses_pool: Op
         logger.warning(
             "[tailor_skills] Gemini arbiter failed/timed out (%s); falling back to A/B tiebreak.", e
         )
-        return _tiebreak(a_result["response"], b_result["response"], allowed_skills_flat), \
-            f"dual-agent(anthropic+openai, arbiter-failed: {e})"
+        tiebroken = _tiebreak(a_result["response"], b_result["response"], allowed_skills_flat)
+        return (
+            tiebroken,
+            f"dual-agent(anthropic+openai, arbiter-failed: {e})",
+            _extract_agent_scores(candidate_a, candidate_b, tiebroken),
+        )
 
 
 
@@ -1915,12 +2032,22 @@ def tailor_with_fallback(jd_text: str, pool: dict) -> TailoredSkillsResponse:
 
 
 
+    # --- Deterministic project_scores (keyword-overlap against each project's
+    # title + bullets, mirrors the domain-scoring approach above) so the
+    # local no-LLM fallback path also produces a genuine (if simpler) score
+    # for every project, instead of leaving project_scores empty. ---
+    project_scores = [
+        RelevanceScore(name=p["title"], score=_score_project_against_jd(p, jd_tokens))
+        for p in load_projects_pool()
+    ]
+
     return TailoredSkillsResponse(
         categories=categories,
         soft_skills_line=soft_skills_line,
         seeking_line=seeking_line,
         rationale=rationale,
         omitted=omitted,
+        project_scores=project_scores,
     )
 
 
@@ -2053,7 +2180,8 @@ def _semantic_scores_lookup(semantic_scores: Optional[List[dict]]) -> dict:
 
 
 def get_course_options_with_suggestions(
-    jd_text: str, courses_pool: dict, semantic_scores: Optional[List[dict]] = None
+    jd_text: str, courses_pool: dict, semantic_scores: Optional[List[dict]] = None,
+    agent_scores: Optional[dict] = None,
 ) -> List[dict]:
     """
     Returns EVERY eligible course from the ground-truth pool (grade 80-100),
@@ -2068,19 +2196,28 @@ def get_course_options_with_suggestions(
 
     semantic_scores (optional): the stored "course_scores" list from a prior
     LLM-based tailoring run's tailored_fields (see services/tailor_service.py),
-    a list of {"name": <course name>, "score": <0-100>} dicts. When a
-    semantic score is available for a given course, it REPLACES the
-    deterministic match_percentage (genuine LLM-judged relevance beats a
-    keyword-tag heuristic) and also feeds "suggested" (score >= 50 counts
-    as a suggestion). Courses with no semantic score fall back to the
-    existing deterministic logic unchanged - this keeps OLD jobs (tailored
-    before this feature existed, or via the local fallback ranker which
-    doesn't produce course_scores) working exactly as before.
+    a list of {"name": <course name>, "score": <0-100>} dicts - this is the
+    FINAL (Gemini-reconciled, or single-agent) score, used for
+    match_percentage/suggested exactly as before. Courses with no semantic
+    score fall back to the existing deterministic logic unchanged - this
+    keeps OLD jobs (tailored before this feature existed, or via the local
+    fallback ranker) working exactly as before.
+
+    agent_scores (optional): dict of {"claude": [...], "gpt": [...],
+    "gemini": [...]} raw per-agent "course_scores" arrays from the most
+    recent multi-agent tailoring run (see services/tailor_service.py's
+    stored "agent_scores" field), so the UI can display all three models'
+    individual judgments side-by-side, not just the final reconciled one.
+    Each option gets optional "claude_score"/"gpt_score"/"gemini_score" int
+    fields (None if that agent didn't run/produce a score for this item).
     """
     suggested = select_relevant_courses(jd_text, courses_pool)
     suggested_names = {c["name"] for c in suggested}
     jd_tokens = set(re.findall(r"[a-zA-Z]+", jd_text.lower()))
     scores_lookup = _semantic_scores_lookup(semantic_scores)
+    claude_lookup = _semantic_scores_lookup((agent_scores or {}).get("claude"))
+    gpt_lookup = _semantic_scores_lookup((agent_scores or {}).get("gpt"))
+    gemini_lookup = _semantic_scores_lookup((agent_scores or {}).get("gemini"))
 
     options = []
     for course in courses_pool.get("courses", []):
@@ -2100,6 +2237,9 @@ def get_course_options_with_suggestions(
             "tags": course.get("tags", []),
             "suggested": is_suggested,
             "match_percentage": match_percentage,
+            "claude_score": claude_lookup.get(name_key),
+            "gpt_score": gpt_lookup.get(name_key),
+            "gemini_score": gemini_lookup.get(name_key),
         })
 
     # Suggested-first ordering for a friendlier UI (algorithm's picks surface
@@ -2293,7 +2433,8 @@ def suggest_role_phrase(jd_text: str, top_domains: List[str], job_title: Optiona
 
 
 def get_domain_options_with_suggestions(
-    jd_text: str, job_title: Optional[str] = None, semantic_scores: Optional[List[dict]] = None
+    jd_text: str, job_title: Optional[str] = None, semantic_scores: Optional[List[dict]] = None,
+    agent_scores: Optional[dict] = None,
 ) -> dict:
     """
     Returns EVERY entry in the authentic AUTHENTIC_SEEKING_DOMAINS bank, each
@@ -2309,16 +2450,26 @@ def get_domain_options_with_suggestions(
 
     semantic_scores (optional): the stored "domain_scores" list from a prior
     LLM-based tailoring run's tailored_fields, a list of
-    {"name": <domain>, "score": <0-100>} dicts. When available for a given
-    domain, it REPLACES the deterministic match_percentage/suggested flag
-    (genuine LLM-judged relevance); domains with no semantic score fall back
-    to the existing deterministic keyword-overlap logic unchanged.
+    {"name": <domain>, "score": <0-100>} dicts - this is the FINAL
+    (Gemini-reconciled, or single-agent) score, used for
+    match_percentage/suggested exactly as before; domains with no semantic
+    score fall back to the existing deterministic keyword-overlap logic.
+
+    agent_scores (optional): dict of {"claude": [...], "gpt": [...],
+    "gemini": [...]} raw per-agent "domain_scores" arrays from the most
+    recent multi-agent tailoring run, so the UI can display all three
+    models' individual judgments side-by-side. Each option gets optional
+    "claude_score"/"gpt_score"/"gemini_score" int fields (None if that
+    agent didn't run/produce a score for this item).
     """
     jd_tokens = set(re.findall(r"[a-zA-Z]+", jd_text.lower()))
     domain_scores = _score_domains(jd_text)
     top_domains = [d for s, d in domain_scores if s > 0][:3]
     suggested_set = set(top_domains)
     scores_lookup = _semantic_scores_lookup(semantic_scores)
+    claude_lookup = _semantic_scores_lookup((agent_scores or {}).get("claude"))
+    gpt_lookup = _semantic_scores_lookup((agent_scores or {}).get("gpt"))
+    gemini_lookup = _semantic_scores_lookup((agent_scores or {}).get("gemini"))
 
     options = []
     for domain in AUTHENTIC_SEEKING_DOMAINS:
@@ -2334,11 +2485,75 @@ def get_domain_options_with_suggestions(
             "domain": domain,
             "suggested": is_suggested,
             "match_percentage": match_percentage,
+            "claude_score": claude_lookup.get(name_key),
+            "gpt_score": gpt_lookup.get(name_key),
+            "gemini_score": gemini_lookup.get(name_key),
         })
 
     options.sort(key=lambda o: (not o["suggested"], -o["match_percentage"]))
     suggested_role = suggest_role_phrase(jd_text, top_domains, job_title=job_title)
     return {"suggested_role": suggested_role, "options": options}
+
+
+def get_project_options_with_suggestions(
+    jd_text: str, semantic_scores: Optional[List[dict]] = None,
+    agent_scores: Optional[dict] = None, previously_selected_titles: Optional[set] = None,
+) -> List[dict]:
+    """
+    Returns EVERY project in the ground-truth projects_pool.json, each
+    annotated with a "suggested" boolean flag and a "match_percentage"
+    (0-100) -- mirrors get_course_options_with_suggestions() /
+    get_domain_options_with_suggestions() exactly, so the UI's "Projects"
+    picker behaves identically to the existing pickers.
+
+    semantic_scores (optional): the stored "project_scores" list from a
+    prior LLM-based (or deterministic-fallback) tailoring run's
+    tailored_fields, a list of {"name": <project title>, "score": <0-100>}
+    dicts - this is the FINAL (Gemini-reconciled, single-agent, or
+    fallback) score. Projects with no semantic score default to a neutral
+    match_percentage of 0 and suggested=True (all projects shown as
+    suggested by default, since there's no separate deterministic
+    project-selection algorithm to fall back on - unlike courses/domains).
+
+    agent_scores (optional): dict of {"claude": [...], "gpt": [...],
+    "gemini": [...]} raw per-agent "project_scores" arrays from the most
+    recent multi-agent tailoring run, so the UI can display all three
+    models' individual judgments side-by-side.
+
+    previously_selected_titles (optional): set of project titles the user
+    explicitly picked in a prior finalize-courses call for this job: if
+    provided, these override "suggested" directly (explicit user intent
+    beats any score-based heuristic).
+    """
+    all_projects = load_projects_pool()
+    scores_lookup = _semantic_scores_lookup(semantic_scores)
+    claude_lookup = _semantic_scores_lookup((agent_scores or {}).get("claude"))
+    gpt_lookup = _semantic_scores_lookup((agent_scores or {}).get("gpt"))
+    gemini_lookup = _semantic_scores_lookup((agent_scores or {}).get("gemini"))
+
+    options = []
+    for project in all_projects:
+        name_key = project["title"].strip().lower()
+        if name_key in scores_lookup:
+            match_percentage = scores_lookup[name_key]
+            is_suggested = match_percentage >= 50
+        else:
+            match_percentage = 0
+            is_suggested = True  # default: show all projects as suggested when no score exists yet
+        if previously_selected_titles is not None:
+            is_suggested = project["title"] in previously_selected_titles
+        options.append({
+            "title": project["title"],
+            "bullets": project.get("bullets", []),
+            "suggested": is_suggested,
+            "match_percentage": match_percentage,
+            "claude_score": claude_lookup.get(name_key),
+            "gpt_score": gpt_lookup.get(name_key),
+            "gemini_score": gemini_lookup.get(name_key),
+        })
+
+    options.sort(key=lambda o: (not o["suggested"], -o["match_percentage"]))
+    return options
 
 
 def build_seeking_line(role_phrase: str, domains: List[str], role_qualifier: str = DEFAULT_ROLE_QUALIFIER) -> str:

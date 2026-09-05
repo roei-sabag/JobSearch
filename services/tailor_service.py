@@ -190,9 +190,10 @@ async def tailor_cv_for_job(job_id: int, session: AsyncSession) -> CVTailored:
         anthropic_key = os.getenv("ANTHROPIC_API_KEY")
         openai_key = os.getenv("OPENAI_API_KEY")
 
+        agent_scores = {}
         try:
             if anthropic_key and openai_key:
-                response, mode = await asyncio.to_thread(
+                response, mode, agent_scores = await asyncio.to_thread(
                     ts.tailor_with_multi_agent_consensus, jd_text, pool, courses_pool
                 )
             elif anthropic_key:
@@ -266,6 +267,20 @@ async def tailor_cv_for_job(job_id: int, session: AsyncSession) -> CVTailored:
         # deterministic logic unchanged - see each
         # get_*_options_with_suggestions() function's docstring in
         # tailor_skills.py.
+        # Default project selection for a brand-new job: everything the
+        # deterministic/LLM project_scores marks as "suggested" (>= 50), or
+        # ALL projects if none scored highly yet, so a first-time render
+        # never silently omits the Projects section - see
+        # get_project_options_with_suggestions()'s docstring.
+        all_projects = ts.load_projects_pool()
+        project_options = ts.get_project_options_with_suggestions(
+            jd_text, semantic_scores=[s.model_dump() for s in response.project_scores]
+        )
+        default_selected_projects = [
+            {"title": p["title"], "bullets": p["bullets"]}
+            for p in project_options if p["suggested"]
+        ] or [{"title": p["title"], "bullets": p["bullets"]} for p in all_projects]
+
         tailored_fields = {
             "mode": mode,
             "categories": [c.model_dump() for c in response.categories],
@@ -282,6 +297,9 @@ async def tailor_cv_for_job(job_id: int, session: AsyncSession) -> CVTailored:
             "soft_skill_scores": [s.model_dump() for s in response.soft_skill_scores],
             "domain_scores": [s.model_dump() for s in response.domain_scores],
             "course_scores": [s.model_dump() for s in response.course_scores],
+            "project_scores": [s.model_dump() for s in response.project_scores],
+            "agent_scores": agent_scores,
+            "selected_projects": default_selected_projects,
         }
 
 
@@ -320,6 +338,7 @@ async def tailor_cv_for_job(job_id: int, session: AsyncSession) -> CVTailored:
             rendered_html_path=rendered_html_path,
             template_path=ts.TEMPLATE_PATH,
             title_line=title_line,
+            selected_projects=default_selected_projects,
         )
 
         cv_tailored.pdf_path = str(pdf_path)
@@ -403,7 +422,10 @@ async def get_course_options_for_job(job_id: int, session: AsyncSession) -> list
     courses_pool = ts.load_json(ts.COURSES_POOL_PATH)
     tailored_fields = await _get_latest_tailored_fields(job_id, session)
     semantic_scores = tailored_fields.get("course_scores")
-    return ts.get_course_options_with_suggestions(job.raw_description, courses_pool, semantic_scores=semantic_scores)
+    agent_scores = tailored_fields.get("agent_scores", {}).get("courses")
+    return ts.get_course_options_with_suggestions(
+        job.raw_description, courses_pool, semantic_scores=semantic_scores, agent_scores=agent_scores
+    )
 
 
 async def get_soft_skill_options_for_job(job_id: int, session: AsyncSession) -> list[dict]:
@@ -444,48 +466,44 @@ async def get_domain_options_for_job(job_id: int, session: AsyncSession) -> dict
 
     tailored_fields = await _get_latest_tailored_fields(job_id, session)
     semantic_scores = tailored_fields.get("domain_scores")
-    return ts.get_domain_options_with_suggestions(job.raw_description, job_title=job.title, semantic_scores=semantic_scores)
+    agent_scores = tailored_fields.get("agent_scores", {}).get("domains")
+    return ts.get_domain_options_with_suggestions(
+        job.raw_description, job_title=job.title, semantic_scores=semantic_scores, agent_scores=agent_scores
+    )
 
 
 async def get_project_options_for_job(job_id: int, session: AsyncSession) -> list[dict]:
     """
-    Returns every project from the ground-truth projects_pool.json.
+    Returns every project from the ground-truth projects_pool.json, each
+    annotated with a "suggested" flag and match_percentage/claude_score/
+    gpt_score/gemini_score - powers the human-in-the-loop "Projects" picker
+    in the UI (mirrors get_course_options_for_job() /
+    get_domain_options_for_job()). Prefers the stored "project_scores"
+    semantic relevance scores from the most recent tailoring run, if
+    available; falls back to whatever project(s) the user previously
+    explicitly selected for this job (if any); falls back to ALL projects
+    marked "suggested" if neither exists yet (brand-new job).
     """
     job = await session.get(Job, job_id)
     if not job:
         raise ValueError("Job not found.")
 
-    projects_pool_path = WORKDIR / "data" / "projects_pool.json"
-    if not projects_pool_path.exists():
-        return []
+    tailored_fields = await _get_latest_tailored_fields(job_id, session)
+    semantic_scores = tailored_fields.get("project_scores")
+    agent_scores = tailored_fields.get("agent_scores", {}).get("projects")
 
-    pool = json.loads(projects_pool_path.read_text(encoding="utf-8-sig"))
-    all_projects = pool.get("projects", [])
-
-    # By default, suggest the first project if no prior selection, or rely on what was previously tailored.
-    previous_fields = await _get_latest_tailored_fields(job_id, session)
-    if previous_fields:
-        previously_selected = previous_fields.get("selected_projects", [])
+    previously_selected_titles = None
+    if not semantic_scores:
+        previously_selected = tailored_fields.get("selected_projects", [])
         if previously_selected:
-            prev_titles = {p["title"] for p in previously_selected}
-            options = []
-            for p in all_projects:
-                options.append({
-                    "title": p["title"],
-                    "bullets": p["bullets"],
-                    "suggested": p["title"] in prev_titles
-                })
-            return options
+            previously_selected_titles = {p["title"] for p in previously_selected}
 
-    # Default fallback: suggest all or just the first. Let's suggest all by default so it's visible.
-    return [
-        {
-            "title": p["title"],
-            "bullets": p["bullets"],
-            "suggested": True
-        }
-        for p in all_projects
-    ]
+    return ts.get_project_options_with_suggestions(
+        job.raw_description,
+        semantic_scores=semantic_scores,
+        agent_scores=agent_scores,
+        previously_selected_titles=previously_selected_titles,
+    )
 
 async def get_skill_options_for_job(job_id: int, session: AsyncSession) -> list[dict]:
     """
@@ -738,12 +756,9 @@ async def finalize_courses_for_job(
 
     final_selected_projects = previous_fields.get("selected_projects", [])
     if selected_projects is not None:
-        projects_pool_path = WORKDIR / "data" / "projects_pool.json"
-        if projects_pool_path.exists():
-            pool = json.loads(projects_pool_path.read_text(encoding="utf-8-sig"))
-            all_projects = pool.get("projects", [])
-            valid_projects = [p for p in all_projects if p["title"] in selected_projects]
-            final_selected_projects = valid_projects
+        all_projects = ts.load_projects_pool()
+        valid_projects = [p for p in all_projects if p["title"] in selected_projects]
+        final_selected_projects = valid_projects
 
 
     # Reconstruct the TailoredSkillsResponse from the previous run's stored

@@ -265,17 +265,40 @@
     border-radius: 10px;
     padding: 12px 16px;
     font-size: 1rem;
-      <div class="projects-panel" style="margin-top:20px;">
-        <h3>📁 Projects</h3>
-        <div class="hint">
-          Pick which projects should appear in the CV's Projects section.
-          The previously-tailored selection (or default) is pre-checked.
-        </div>
-        <div id="projectList"></div>
-      </div>
-
     font-weight: 600;
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  }
+  .projects-panel {
+    margin-top: 20px;
+  }
+  .agent-score-badges {
+    display: inline-flex;
+    gap: 6px;
+    margin-left: 6px;
+    flex-wrap: wrap;
+  }
+  .agent-badge {
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 6px;
+    background: #23273f;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .agent-badge.claude-badge {
+    background: #2b2140;
+    color: #c9a3ff;
+  }
+  .agent-badge.gpt-badge {
+    background: #123a2e;
+    color: #6ee7b7;
+  }
+  .agent-badge.gemini-badge {
+    background: linear-gradient(135deg, #4b3a00, #7a5c00);
+    color: #ffd76a;
+    border: 1px solid #ffd76a;
+    box-shadow: 0 0 6px rgba(255, 215, 106, 0.4);
   }
   .mode-badge-container .log-line.mode-badge.ok {
     border-color: var(--ok);
@@ -467,6 +490,15 @@
           The previously-tailored selection is pre-checked.
         </div>
         <div id="skillList"></div>
+      </div>
+
+      <div class="projects-panel">
+        <h3>📁 Projects</h3>
+        <div class="hint">
+          Pick which projects should appear in the CV's Projects section.
+          The previously-tailored selection (or default) is pre-checked.
+        </div>
+        <div id="projectList"></div>
       </div>
 
       <button id="finalizeCoursesBtn">Confirm Selections &amp; Send CV</button>
@@ -892,6 +924,29 @@ async function loadCourseOptions(jobId) {
 
 
 
+/**
+ * Renders the three-model relevance-score badges (Claude / GPT-4o / Gemini)
+ * for a single item, if any agent scores are present. Gemini's badge (the
+ * FINAL score actually used to decide "suggested") is visually distinct
+ * (gold/trophy) so it's unmistakable which score drove the decision.
+ * Returns '' (no badges) if none of the three scores are present, e.g. for
+ * an old job tailored before this feature existed, or a fallback-mode run.
+ */
+function buildAgentScoreBadges(item) {
+  const badges = [];
+  if (item.claude_score !== null && item.claude_score !== undefined) {
+    badges.push(`<span class="agent-badge claude-badge">Claude: ${item.claude_score}%</span>`);
+  }
+  if (item.gpt_score !== null && item.gpt_score !== undefined) {
+    badges.push(`<span class="agent-badge gpt-badge">GPT-4o: ${item.gpt_score}%</span>`);
+  }
+  if (item.gemini_score !== null && item.gemini_score !== undefined) {
+    badges.push(`<span class="agent-badge gemini-badge">🏆 Gemini (Final): ${item.gemini_score}%</span>`);
+  }
+  if (badges.length === 0) return '';
+  return `<div class="agent-score-badges">${badges.join('')}</div>`;
+}
+
 function renderCourseList(options) {
   courseListEl.innerHTML = '';
   options.forEach((course, idx) => {
@@ -906,7 +961,8 @@ function renderCourseList(options) {
     label.setAttribute('for', checkbox.id);
     label.innerHTML = `${course.name} <span class="grade">(Grade: ${course.grade})</span>` +
       `<span class="match-badge">${course.match_percentage}% match</span>` +
-      buildCourseRationaleTooltip(course);
+      buildCourseRationaleTooltip(course) +
+      buildAgentScoreBadges(course);
 
     item.appendChild(checkbox);
     item.appendChild(label);
@@ -928,7 +984,9 @@ function renderProjectList(options) {
     checkbox.checked = proj.suggested;
     const label = document.createElement('label');
     label.setAttribute('for', checkbox.id);
-    label.innerHTML = `<b>${proj.title}</b>`;
+    label.innerHTML = `<b>${proj.title}</b>` +
+      `<span class="match-badge">${proj.match_percentage}% match</span>` +
+      buildAgentScoreBadges(proj);
 
     item.appendChild(checkbox);
     item.appendChild(label);
@@ -972,7 +1030,8 @@ function renderDomainList(options) {
     label.setAttribute('for', checkbox.id);
     label.innerHTML = `${domain.domain}` +
       `<span class="match-badge">${domain.match_percentage}% match</span>` +
-      buildRationaleTooltip(domain.domain);
+      buildRationaleTooltip(domain.domain) +
+      buildAgentScoreBadges(domain);
     item.appendChild(checkbox);
     item.appendChild(label);
     domainListEl.appendChild(item);

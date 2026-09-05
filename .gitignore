@@ -4,6 +4,7 @@ __pycache__/
 .venv/
 venv/
 jobs.db
+jobs_backup_*.db
 output/
 _rendered_cv.html
 _css_history/
