@@ -1016,11 +1016,10 @@ finalizeCoursesBtn.addEventListener('click', async () => {
   const checkedSoftSkills = Array.from(softSkillListEl.querySelectorAll('input[type="checkbox"]:checked'))
     .map(cb => cb.value);
   const checkedDomains = Array.from(domainListEl.querySelectorAll('input[type="checkbox"]:checked'))
+    .map(cb => cb.value);
   const projectListEl = document.getElementById('projectList');
   const checkedProjects = projectListEl ? Array.from(projectListEl.querySelectorAll('input[type="checkbox"]:checked'))
     .map(cb => cb.value) : undefined;
-
-    .map(cb => cb.value);
   const checkedSkills = Array.from(skillListEl.querySelectorAll('input[type="checkbox"]:checked'))
     .map(cb => cb.value);
   const rolePhrase = rolePhraseInputEl.value.trim();
