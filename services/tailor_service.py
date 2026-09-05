@@ -26,7 +26,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import tailor_skills as ts
+import services.tailor_skills as ts
 from db.models import CVMaster, CVTailored, Job
 from services.notification_service import send_tailoring_notification
 
