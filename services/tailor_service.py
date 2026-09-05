@@ -131,7 +131,7 @@ async def ensure_cv_master_seeded(session: AsyncSession) -> CVMaster:
         return cv_master
 
     raw_text = ""
-    skills_txt_path = WORKDIR / "all_my_skills.txt"
+    skills_txt_path = WORKDIR / "data" / "all_my_skills.txt"
     if skills_txt_path.exists():
         raw_text = skills_txt_path.read_text(encoding="utf-8")
 
@@ -248,7 +248,7 @@ async def tailor_cv_for_job(job_id: int, session: AsyncSession) -> CVTailored:
         # response. Only run once per job (here, at initial tailoring time);
         # finalize_courses_for_job() below reuses this same stored result
         # rather than re-calling the LLM.
-        skills_txt_path = WORKDIR / "all_my_skills.txt"
+        skills_txt_path = WORKDIR / "data" / "all_my_skills.txt"
         candidate_background = skills_txt_path.read_text(encoding="utf-8") if skills_txt_path.exists() else ""
         job_analysis = await asyncio.to_thread(ts.analyze_job_posting, jd_text, candidate_background)
 

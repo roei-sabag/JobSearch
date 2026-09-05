@@ -36,14 +36,14 @@ from typing import List, Optional
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
-WORKDIR = Path(__file__).resolve().parent
-ORIGINAL_PDF = WORKDIR / "Roei_Sabag_CV.pdf"
-TEMPLATE_HTML = WORKDIR / "cv_template.html"
-STYLE_CSS = WORKDIR / "cv_style.css"
-TAILORED_PDF = WORKDIR / "tailored_cv.pdf"
-RENDERED_HTML = WORKDIR / "_rendered_cv.html"
-QA_REPORT_PATH = WORKDIR / "qa_report.md"
-CSS_BACKUP_DIR = WORKDIR / "_css_history"
+WORKDIR = Path(__file__).resolve().parent.parent
+ORIGINAL_PDF = WORKDIR / "assets" / "Roei_Sabag_CV.pdf"
+TEMPLATE_HTML = WORKDIR / "templates" / "cv_template.html"
+STYLE_CSS = WORKDIR / "templates" / "cv_style.css"
+TAILORED_PDF = WORKDIR / "output" / "tailored_cv.pdf"
+RENDERED_HTML = WORKDIR / "output" / "_rendered_cv.html"
+QA_REPORT_PATH = WORKDIR / "output" / "qa_report.md"
+CSS_BACKUP_DIR = WORKDIR / "output" / "_css_history"
 
 MAX_ITERATIONS = 8
 TARGET_SIMILARITY = 90
@@ -150,7 +150,7 @@ def render_current_pdf():
     # (re-use whatever tailored_skills content already exists in the last
     # _rendered_cv.html if present, else fall back to the raw skills pool
     # grouped as-is) so layout fidelity is judged on realistic content.
-    skills_pool_path = WORKDIR / "skills_pool.json"
+    skills_pool_path = WORKDIR / "data" / "skills_pool.json"
     if skills_pool_path.exists():
         pool = json.loads(skills_pool_path.read_text(encoding="utf-8"))
         tailored_skills = pool["categories"]

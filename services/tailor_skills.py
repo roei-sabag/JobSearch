@@ -59,15 +59,15 @@ logger = logging.getLogger("tailor_skills")
 # Configuration / Layout-safety guardrails
 # --------------------------------------------------------------------------- #
 
-WORKDIR = Path(__file__).resolve().parent
+WORKDIR = Path(__file__).resolve().parent.parent
 JD_PATH = WORKDIR / "sample_jd.txt"
-SKILLS_POOL_PATH = WORKDIR / "skills_pool.json"
-COURSES_POOL_PATH = WORKDIR / "courses_pool.json"
-AUTHENTICITY_POOL_PATH = WORKDIR / "authenticity_pool.json"
-TEMPLATE_PATH = WORKDIR / "cv_template.html"
-OUTPUT_PDF_PATH = WORKDIR / "tailored_cv.pdf"
-OUTPUT_REPORT_PATH = WORKDIR / "tailoring_report.md"
-STATE_PATH = WORKDIR / "cv_dynamic_state.json"
+SKILLS_POOL_PATH = WORKDIR / "data" / "skills_pool.json"
+COURSES_POOL_PATH = WORKDIR / "data" / "courses_pool.json"
+AUTHENTICITY_POOL_PATH = WORKDIR / "data" / "authenticity_pool.json"
+TEMPLATE_PATH = WORKDIR / "templates" / "cv_template.html"
+OUTPUT_PDF_PATH = WORKDIR / "output" / "tailored_cv.pdf"
+OUTPUT_REPORT_PATH = WORKDIR / "output" / "tailoring_report.md"
+STATE_PATH = WORKDIR / "data" / "cv_dynamic_state.json"
 
 MAX_CATEGORIES = 3          # never exceed original number of skill categories
 MAX_SKILLS_PER_CATEGORY = 8  # protects line-wrap / vertical space

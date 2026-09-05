@@ -7,3 +7,7 @@ jobs.db
 output/
 _rendered_cv.html
 _css_history/
+
+# Personal Assets
+assets/
+
