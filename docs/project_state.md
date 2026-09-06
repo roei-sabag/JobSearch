@@ -211,7 +211,8 @@ JobSearch/
 │                                    #   (categories: "Hardware & Verification", "Programming & Tools" — Engineering Fields
 │                                    #   category and 4 specific skills were deliberately removed per user request).
 ├── courses_pool.json                # Ground-truth academic transcript data (course name + exact grade + relevance tags),
-│                                    #   extracted via word-position-accurate pdfplumber parsing of rwservlet.pdf.
+│                                    #   extracted via word-position-accurate pdfplumber parsing of rwservlet.pdf
+│                                    #   (updated 06/09/26 transcript — includes "Integrated Circuits and Introduction to VLSI", grade 85).
 │                                    #   ONLY courses graded 80-100 are included (Pass/Exempt/400-code/F grades excluded).
 │                                    #   'tags' are curated for JD-matching only (never raw course-name word matching,
 │                                    #   to avoid false positives like "Physics 1A" matching "Electrical Engineering" JDs).
